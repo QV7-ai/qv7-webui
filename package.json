@@ -1,0 +1,20 @@
+{
+  "name": "wlfv-ai",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,web -c cyan,magenta \"npm run dev -w @wlfv/server\" \"npm run dev -w @wlfv/web\"",
+    "build": "npm run build -w @wlfv/shared && npm run build -w @wlfv/server && npm run build -w @wlfv/web",
+    "typecheck": "npm run typecheck -w @wlfv/shared && npm run typecheck -w @wlfv/server && npm run typecheck -w @wlfv/web",
+    "lint": "npm run lint -w @wlfv/web --if-present",
+    "test": "npm run test -w @wlfv/server",
+    "db:migrate": "npm run db:migrate -w @wlfv/server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "typescript": "^5.9.2"
+  }
+}

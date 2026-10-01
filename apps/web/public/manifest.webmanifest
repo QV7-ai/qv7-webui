@@ -1,0 +1,19 @@
+{
+  "id": "/",
+  "name": "QV7",
+  "short_name": "QV7",
+  "description": "Self-hosted AI chat",
+  "start_url": "/chat",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#141416",
+  "theme_color": "#fe4901",
+  "icons": [
+    {
+      "src": "/QV7.png",
+      "sizes": "656x805",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
