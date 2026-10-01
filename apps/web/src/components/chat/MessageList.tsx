@@ -19,6 +19,7 @@ export type UiMessage = {
   sources?: WebSearchSource[];
   activities?: ChatActivity[];
   images?: { url: string; name: string }[];
+  canvas?: boolean;
 };
 
 export function splitUserContent(content: string) {
@@ -83,8 +84,9 @@ export function MessageList({
                 wait={m.wait}
               />
               {(() => {
-                const canvases = parseCanvases(m.content);
-                const visible = stripToolMarkup(stripCanvas(m.content));
+                const showCanvas = m.canvas !== false;
+                const canvases = showCanvas ? parseCanvases(m.content) : [];
+                const visible = stripToolMarkup(showCanvas ? stripCanvas(m.content) : m.content);
                 const traced = Boolean(m.thinking || m.activities?.length || m.sources?.length);
                 const waiting = Boolean(m.streaming && !visible && !traced);
                 return (

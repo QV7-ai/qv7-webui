@@ -68,15 +68,17 @@ function upsertRemoteTurn(prev: UiMessage[], json: ChatStreamPayload): UiMessage
   const userMsg: UiMessage | null = json.userMessage
     ? { id: json.userMessage.id, role: "user", content: parsed.text, images: parsed.images }
     : null;
+  const existing = prev.find((m) => m.id === json.assistantId);
   const asst: UiMessage = {
     id: json.assistantId,
     role: "assistant",
-    content: json.content || prev.find((m) => m.id === json.assistantId)?.content || "",
-    thinking: json.thinking ?? (prev.find((m) => m.id === json.assistantId)?.thinking || ""),
+    content: json.content || existing?.content || "",
+    thinking: json.thinking ?? (existing?.thinking || ""),
     streaming: true,
     wait: json.wait || json.stage || "loading",
     sources: json.sources,
     activities: json.activities,
+    canvas: existing?.canvas,
   };
   const hasAsst = prev.some((m) => m.id === asst.id);
   const hasUser = userMsg ? prev.some((m) => m.id === userMsg.id) : true;
@@ -209,6 +211,7 @@ export default function ChatPage({
   const canvasDirty = useRef(false);
   const canvasMsgId = useRef("");
   const canvasHold = useRef(false);
+  const canvasDismissed = useRef("");
   const skillDefaultsApplied = useRef(false);
   const [toolPermission, setToolPermission] = useState<"full" | "ask" | null>(null);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
@@ -356,11 +359,12 @@ export default function ChatPage({
     canvasDirty.current = false;
     canvasMsgId.current = "";
     canvasHold.current = true;
+    canvasDismissed.current = "";
     setCanvasOpen(false);
   }, [conversationId]);
 
   useEffect(() => {
-    const msg = [...messages].reverse().find((item) => item.role === "assistant" && parseCanvases(item.content).length);
+    const msg = [...messages].reverse().find((item) => item.role === "assistant" && item.canvas && parseCanvases(item.content).length);
     if (canvasHold.current) {
       if (!messages.length) return;
       canvasHold.current = false;
@@ -374,6 +378,7 @@ export default function ChatPage({
     if (canvasDirty.current && canvasMsgId.current === msg.id) return;
     canvasMsgId.current = msg.id;
     setCanvasDoc(doc);
+    if (canvasDismissed.current === msg.id) return;
     setCanvasOpen(true);
   }, [messages]);
 
@@ -613,6 +618,8 @@ export default function ChatPage({
       setError("");
       return;
     }
+    const requestedCanvas = Boolean(options?.canvas ?? canvasOn);
+    const useCanvas = requestedCanvas && (isAdmin || features.toolCanvas);
     const useSearch = Boolean(options?.search ?? webSearchOn) && webSearchAvailable;
     const needsAsk = toolPermission === "ask" && (useSearch || codeInterpreterOn) && !options?.confirmed;
     const needsSearchConfirm =
@@ -673,6 +680,7 @@ export default function ChatPage({
       content: "",
       thinking: "",
       streaming: true,
+      canvas: useCanvas,
       wait: useCreate || useEdit ? "image" : useSearch ? "searching" : "loading",
     };
     setMessages((prev) => [...prev, userMsg, asst]);
@@ -692,9 +700,9 @@ export default function ChatPage({
           codeInterpreter: codeInterpreterOn,
           createImage: useCreate,
           editImage: useEdit,
-          canvas: options?.canvas ?? canvasOn,
-          canvasTitle: canvasDoc?.title,
-          canvasHtml: canvasOpen && canvasDoc ? canvasDoc.html : undefined,
+          canvas: useCanvas,
+          canvasTitle: useCanvas ? canvasDoc?.title : undefined,
+          canvasHtml: useCanvas && canvasOpen && canvasDoc ? canvasDoc.html : undefined,
           skillIds: options?.skillIds ?? selectedSkillIds,
           attachments: pendingAttachments.map((item) => ({
             name: item.name,
@@ -1010,6 +1018,7 @@ export default function ChatPage({
                 if (last) void send(last.content);
               }}
               onOpenCanvas={(doc) => {
+                canvasDismissed.current = "";
                 canvasDirty.current = true;
                 setCanvasDoc(doc);
                 setCanvasOpen(true);
@@ -1103,7 +1112,10 @@ export default function ChatPage({
               canvasDirty.current = true;
               setCanvasDoc((current) => (current ? { ...current, html } : current));
             }}
-            onClose={() => setCanvasOpen(false)}
+            onClose={() => {
+              canvasDismissed.current = canvasMsgId.current;
+              setCanvasOpen(false);
+            }}
           />
         ) : null}
         </div>

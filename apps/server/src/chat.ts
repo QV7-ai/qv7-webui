@@ -820,15 +820,21 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
           ? "Thinking is shown in a separate panel. Put reasoning only inside <think> and </think>. Do not write a Thinking Process section in the answer. After </think>, write only the answer. Call tools with a ```tool fence, never a <tool_code> tag."
           : "Do not output chain-of-thought.",
         userPrompt,
-        CANVAS_PROMPT,
-        canvas || canvasHtml?.trim() ? CANVAS_DESIGN : "",
-        canvas ? "Canvas is on for this message. Reply with one short sentence and one ```html file styled with Tailwind classes. Include the Tailwind and Font Awesome lines in the head. Do not output a ```css block. Never output a <canvas> tag." : "",
-        canvasHtml?.trim()
-          ? `The user is editing this HTML file${canvasTitle ? ` titled "${canvasTitle.slice(0, 80)}"` : ""}. When they ask for a change, output one new \`\`\`html fence with the complete redesigned file. Keep the same design quality. Do not use a <canvas> tag.\n${canvasHtml.slice(0, 80000)}`
-          : "",
         toolPrompt,
         folderPrompt,
         skillPrompt,
+        canvas
+          ? [
+              CANVAS_PROMPT,
+              CANVAS_DESIGN,
+              "Canvas is on for this message. Reply with one short sentence and one ```html file styled with Tailwind classes. Include the Tailwind and Font Awesome lines in the head. Do not output a ```css block. Never output a <canvas> tag.",
+              canvasHtml?.trim()
+                ? `The user is editing this HTML file${canvasTitle ? ` titled "${canvasTitle.slice(0, 80)}"` : ""}. When they ask for a change, output one new \`\`\`html fence with the complete redesigned file. Keep the same design quality. Do not use a <canvas> tag.\n${canvasHtml.slice(0, 80000)}`
+                : "",
+            ]
+              .filter(Boolean)
+              .join("\n\n")
+          : "Canvas is off. Do not output a complete HTML document, a ```html page, or a canvas file. If a skill asks for an HTML report or a canvas, answer in normal chat markdown instead.",
         profileLines.length ? `User profile:\n${profileLines.map((line) => `- ${line}`).join("\n")}` : "",
         memoryContext
           ? `${memoryContext}\n\nUse <memory_context> only when it helps. It is private notes about the user, not about you. Do not paste the whole list. Do not speak in the user's first person.`
