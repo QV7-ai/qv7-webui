@@ -6,6 +6,17 @@
 
 QV7 WebUI is an open-source chat interface for models you run yourself. The browser talks only to this app. This app talks to Ollama and to any OpenAI-compatible connection an admin adds.
 
+## Mobile
+
+The interface is mobile friendly. On a phone the composer stays above the keyboard, and files, images, tools, and skills open from a sheet at the bottom. You can also install it from the browser.
+
+<p>
+  <img src="docs/mobile-chat.png" alt="Welcome screen on a phone" width="200">
+  <img src="docs/mobile-keyboard.png" alt="Composer with the keyboard open" width="200">
+  <img src="docs/mobile-add.png" alt="Add to chat sheet" width="200">
+  <img src="docs/mobile-tools.png" alt="Tools list on a phone" width="200">
+</p>
+
 ## Features
 
 - Chat with models from Ollama or any OpenAI-compatible connection
@@ -18,7 +29,7 @@ QV7 WebUI is an open-source chat interface for models you run yourself. The brow
 - Canvas pages beside the chat
 - Accounts, roles, and optional public sign-up
 - Branding, dark and light themes, and English or Dutch
-- Installable in the browser, including on a phone
+- Mobile friendly layout, and installable in the browser on a phone
 
 The project site and documentation are at [qv7.nl](https://qv7.nl).
 
