@@ -116,6 +116,14 @@ export function ActivityTrace({
             </div>
           );
         }
+        if (step.kind === "mcp") {
+          return (
+            <p key={`mcp-${index}`} className={`truncate text-[14px] text-[var(--text)] ${compact ? "relative" : "py-1.5 text-[13px] text-[var(--secondary)]"}`}>
+              {compact ? <span className="absolute -left-[21px] top-1.5 h-2 w-2 rounded-full bg-[var(--muted)]" /> : null}
+              {tr("mcpToolUsed")} {step.tool} · {step.server}
+            </p>
+          );
+        }
         if (step.kind === "fetch") {
           const host = hostOf(step.url);
           return (

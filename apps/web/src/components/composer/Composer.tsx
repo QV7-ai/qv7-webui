@@ -1,4 +1,4 @@
-import { ArrowUp, Brain, Check, ChevronRight, FileText, FileUp, Globe, ImagePlus, Images, Link2, PanelsTopLeft, Plus, Shield, ShieldAlert, Sparkles, Square, Terminal, X } from "lucide-react";
+import { ArrowUp, Brain, Check, ChevronRight, FileText, FileUp, Globe, ImagePlus, Images, Link2, PanelsTopLeft, Plug, Plus, Shield, ShieldAlert, Sparkles, Square, Terminal, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { ChatModel } from "@wlfv/shared";
@@ -53,6 +53,10 @@ type Props = {
   skills?: { id: string; name: string }[];
   selectedSkillIds?: string[];
   onToggleSkill?: (id: string) => void;
+  mcpTools?: { callName: string; name: string; serverName: string }[];
+  selectedMcpIds?: string[];
+  onToggleMcp?: (callName: string) => void;
+  onRefreshMcp?: () => void;
   toolPermissionsEnabled?: boolean;
   toolPermission?: "full" | "ask" | null;
   onToolPermission?: (mode: "full" | "ask" | null) => void;
@@ -101,6 +105,10 @@ export function Composer({
   skills = [],
   selectedSkillIds = [],
   onToggleSkill,
+  mcpTools = [],
+  selectedMcpIds = [],
+  onToggleMcp,
+  onRefreshMcp,
   toolPermissionsEnabled,
   toolPermission,
   onToolPermission,
@@ -118,7 +126,7 @@ export function Composer({
   const sheetRef = useRef<HTMLDivElement>(null);
   const attachmentsRef = useRef(attachments);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [submenu, setSubmenu] = useState<null | { id: "tools" | "skills" | "effort"; top: number }>(null);
+  const [submenu, setSubmenu] = useState<null | { id: "tools" | "skills" | "effort" | "mcp"; top: number }>(null);
   const [skillQuery, setSkillQuery] = useState("");
   const [toolQuery, setToolQuery] = useState("");
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
@@ -130,7 +138,8 @@ export function Composer({
   const [phone, setPhone] = useState(() => isPhoneViewport());
   const [askIndex, setAskIndex] = useState(() => Math.floor(Math.random() * ASK_PROMPTS.length));
   const [mentionPos, setMentionPos] = useState({ top: 0, left: 0, width: 0, above: true });
-  const [sheetSection, setSheetSection] = useState<null | "tools" | "skills" | "effort">(null);
+  const [sheetSection, setSheetSection] = useState<null | "tools" | "skills" | "effort" | "mcp">(null);
+  const [mcpQuery, setMcpQuery] = useState("");
 
   attachmentsRef.current = attachments;
 
@@ -308,7 +317,7 @@ export function Composer({
     return window.matchMedia("(pointer: coarse)").matches;
   }
 
-  function showSubmenu(id: "tools" | "skills" | "effort", row: HTMLButtonElement) {
+  function showSubmenu(id: "tools" | "skills" | "effort" | "mcp", row: HTMLButtonElement) {
     const menu = menuRef.current?.getBoundingClientRect();
     const item = row.getBoundingClientRect();
     if (!menu) return;
@@ -443,6 +452,9 @@ export function Composer({
   const skillQueryText = skillQuery.trim().toLowerCase();
   const skillMatches = skills.filter((skill) => skill.name.toLowerCase().includes(skillQueryText));
   const toolQueryText = toolQuery.trim().toLowerCase();
+  const mcpQueryText = mcpQuery.trim().toLowerCase();
+  const mcpMatches = mcpTools.filter((tool) => `${tool.name} ${tool.serverName}`.toLowerCase().includes(mcpQueryText));
+  const mcpServers = [...new Set(mcpMatches.map((tool) => tool.serverName))];
   const effortLevels = model?.capabilities.thinking ? model.capabilities.thinkingLevels : [];
   const effortLabel = (level: string) => (level ? level[0].toUpperCase() + level.slice(1) : "");
   const toolRows: {
@@ -613,6 +625,7 @@ export function Composer({
                 if (phone) ref.current?.blur();
                 placeMenu();
                 setMenuOpen((open) => !open);
+                onRefreshMcp?.();
               }}
             >
               <Plus size={18} />
@@ -926,6 +939,58 @@ export function Composer({
                   <button
                     type="button"
                     className="flex h-12 w-full items-center gap-3 rounded-2xl bg-[var(--surface)] px-4 text-left text-[15px]"
+                    onClick={() => setSheetSection((current) => (current === "mcp" ? null : "mcp"))}
+                  >
+                    <Plug size={18} className="text-[var(--muted)]" />
+                    <span className="min-w-0 flex-1">{tr("mcpTitle")}</span>
+                    {selectedMcpIds.length ? <span className="text-[12px] text-[var(--muted)]">{selectedMcpIds.length}</span> : null}
+                    <ChevronRight size={16} className={`text-[var(--muted)] ${sheetSection === "mcp" ? "rotate-90" : ""}`} />
+                  </button>
+                  {sheetSection === "mcp" ? (
+                    <div className="overflow-hidden rounded-2xl bg-[var(--surface)]">
+                      <div className="border-b border-[var(--border)] p-2">
+                        <input
+                          value={mcpQuery}
+                          onChange={(event) => setMcpQuery(event.target.value)}
+                          placeholder={tr("searchMcp")}
+                          aria-label={tr("searchMcp")}
+                          className="h-10 w-full rounded-xl bg-[var(--elevated)] px-3 text-[14px] outline-none"
+                        />
+                      </div>
+                      {!mcpTools.length ? (
+                        <p className="px-4 py-3 text-[13px] text-[var(--muted)]">{tr("noMcpTools")}</p>
+                      ) : mcpMatches.length ? (
+                        <div className="max-h-[13.75rem] overflow-y-auto overscroll-contain">
+                          {mcpServers.map((server) => (
+                            <div key={server}>
+                              <p className="px-4 pb-1 pt-2 text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--muted)]">{server}</p>
+                              {mcpMatches
+                                .filter((tool) => tool.serverName === server)
+                                .map((tool) => {
+                                  const on = selectedMcpIds.includes(tool.callName);
+                                  return (
+                                    <button
+                                      key={tool.callName}
+                                      type="button"
+                                      className="flex h-11 w-full items-center justify-between gap-2 px-4 text-left text-[15px]"
+                                      onClick={() => onToggleMcp?.(tool.callName)}
+                                    >
+                                      <span className="truncate">{tool.name}</span>
+                                      {on ? <Check size={16} className="shrink-0 text-[var(--accent)]" /> : null}
+                                    </button>
+                                  );
+                                })}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="px-4 py-3 text-[13px] text-[var(--muted)]">{tr("noMcpMatches")}</p>
+                      )}
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="flex h-12 w-full items-center gap-3 rounded-2xl bg-[var(--surface)] px-4 text-left text-[15px]"
                     onClick={() => setSheetSection((current) => (current === "skills" ? null : "skills"))}
                   >
                     <Sparkles size={18} className="text-[var(--muted)]" />
@@ -1059,6 +1124,24 @@ export function Composer({
             </button>
             <button
               type="button"
+              className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[13px] hover:bg-[var(--hover)] ${submenu?.id === "mcp" ? "bg-[var(--hover)]" : ""}`}
+                onMouseEnter={(event) => {
+                  if (!coarsePointer()) showSubmenu("mcp", event.currentTarget);
+                }}
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={(event) => (submenu?.id === "mcp" ? setSubmenu(null) : showSubmenu("mcp", event.currentTarget))}
+              >
+                <span className="flex items-center gap-2">
+                  <Plug size={15} className="text-[var(--muted)]" />
+                  {tr("mcpTitle")}
+                </span>
+                <span className="flex shrink-0 items-center gap-1 text-[var(--muted)]">
+                  {selectedMcpIds.length ? <span className="text-[12px]">{selectedMcpIds.length}</span> : null}
+                  <ChevronRight size={14} />
+                </span>
+              </button>
+            <button
+              type="button"
               className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[13px] hover:bg-[var(--hover)] ${submenu?.id === "skills" ? "bg-[var(--hover)]" : ""}`}
               onMouseEnter={(event) => {
                 if (!coarsePointer()) showSubmenu("skills", event.currentTarget);
@@ -1135,6 +1218,52 @@ export function Composer({
                           ))
                         ) : (
                           <p className="px-3 py-2 text-[12px] text-[var(--muted)]">{tr("noToolMatches")}</p>
+                        )}
+                      </div>
+                    </>
+                  ) : submenu.id === "mcp" ? (
+                    <>
+                      <div className="border-b border-[var(--border)] p-2">
+                        <input
+                          ref={(node) => {
+                            if (node && !coarsePointer()) node.focus();
+                          }}
+                          value={mcpQuery}
+                          onChange={(event) => setMcpQuery(event.target.value)}
+                          onMouseDown={(event) => event.stopPropagation()}
+                          onKeyDown={(event) => event.stopPropagation()}
+                          placeholder={tr("searchMcp")}
+                          aria-label={tr("searchMcp")}
+                          className="h-8 w-full rounded-lg bg-[var(--surface)] px-2 text-[13px] text-[var(--text)] outline-none"
+                        />
+                      </div>
+                      <div className="max-h-[360px] overflow-y-auto [scrollbar-width:thin]">
+                        {!mcpTools.length ? (
+                          <p className="px-3 py-2 text-[12px] text-[var(--muted)]">{tr("noMcpTools")}</p>
+                        ) : mcpMatches.length ? (
+                          mcpServers.map((server) => (
+                            <div key={server}>
+                              <p className="px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--muted)]">{server}</p>
+                              {mcpMatches
+                                .filter((tool) => tool.serverName === server)
+                                .map((tool) => {
+                                  const on = selectedMcpIds.includes(tool.callName);
+                                  return (
+                                    <button
+                                      key={tool.callName}
+                                      type="button"
+                                      className="flex h-9 w-full items-center justify-between gap-2 px-3 text-left text-[13px] leading-5 hover:bg-[var(--hover)]"
+                                      onClick={() => onToggleMcp?.(tool.callName)}
+                                    >
+                                      <span className="truncate">{tool.name}</span>
+                                      {on ? <Check size={14} className="shrink-0 text-[var(--accent)]" /> : null}
+                                    </button>
+                                  );
+                                })}
+                            </div>
+                          ))
+                        ) : (
+                          <p className="px-3 py-2 text-[12px] text-[var(--muted)]">{tr("noMcpMatches")}</p>
                         )}
                       </div>
                     </>

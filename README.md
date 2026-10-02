@@ -22,7 +22,7 @@ The interface is mobile friendly. On a phone the composer stays above the keyboa
 - Chat with models from Ollama or any OpenAI-compatible connection
 - Model picker, with only the models an admin has enabled
 - Thinking, when the model supports it
-- Web search, code interpreter, and image create or edit
+- Web search, code interpreter, image create or edit, and admin-configured MCP tools
 - File, image, and webpage attachments
 - Skills, folder instructions, and personal tone
 - Memory the model can save and search

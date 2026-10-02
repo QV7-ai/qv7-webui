@@ -28,6 +28,10 @@ import { MEMORY_REVIEW_INTERVAL_TURNS, memoryUsageForTurn, memoryUsedPayload, ty
 import { materializeDocument, preferredDocumentExt } from "./documents.ts";
 import { bioAsUserFact, correctIdentityVoice, directIdentityReply } from "./identity.ts";
 import { executeToolCall, parseToolCalls, questionNeedsCode, questionNeedsSearch } from "./tools.ts";
+import { executeMcpTool, listAvailableMcpTools, mcpToolsPrompt, parseMcpCalls } from "./mcp/invoke.ts";
+import { mcpSecretValues } from "./mcp/store.ts";
+import { redactSecrets } from "./mcp/sanitize.ts";
+import { flushAssistantHeld, releaseAssistantDelta } from "./mcp/visible.ts";
 import { recordToolRun, recordMessageUsage, assertTokenQuota } from "./usage.ts";
 import {
   cleanContextSummary,
@@ -589,6 +593,7 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
       createImage,
       editImage,
       skillIds,
+      mcpCallNames,
       canvas,
       canvasTitle,
       canvasHtml,
@@ -795,7 +800,30 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
     reply.hijack();
     reply.raw.writeHead(200, SSE_HEADERS);
     reply.raw.socket?.setTimeout(0);
-    const emit = (event: string, data: unknown) => emitChat(reply.raw as SseRaw, conversationId, event, data);
+    const mcpSecrets = mcpSecretValues(db, env);
+    const emitRaw = (event: string, data: unknown) => emitChat(reply.raw as SseRaw, conversationId, event, data);
+    const emit = (event: string, data: unknown) => {
+      if ((event === "content" || event === "thinking") && data && typeof data === "object") {
+        const row = data as { delta?: unknown };
+        if (typeof row.delta === "string") {
+          emitRaw(event, { ...row, delta: redactSecrets(row.delta, mcpSecrets) });
+          return;
+        }
+      }
+      if (event === "activity" && data && typeof data === "object") {
+        const row = data as { activities?: ChatActivity[] };
+        emitRaw(event, {
+          activities: (row.activities || []).map((item) => {
+            if (item.kind === "note") return { ...item, text: redactSecrets(item.text, mcpSecrets) };
+            if (item.kind === "mcp") return { ...item, server: redactSecrets(item.server, mcpSecrets), tool: redactSecrets(item.tool, mcpSecrets) };
+            if (item.kind === "search") return { ...item, query: redactSecrets(item.query, mcpSecrets) };
+            return item;
+          }),
+        });
+        return;
+      }
+      emitRaw(event, data);
+    };
     const beat = setInterval(() => {
       try {
         if (!reply.raw.writableEnded && !reply.raw.destroyed) reply.raw.write(`event: ping\ndata: {}\n\n`);
@@ -922,6 +950,9 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
       const offerSearch = Boolean(webSearch) || (loadTools && searchAllowed);
       const offerCode = Boolean(codeInterpreter) || (loadTools && codeAllowed && questionNeedsCode(currentAsk));
       const toolPrompt = userPrompt.includes("```tool") ? "" : toolsPromptFor({ search: offerSearch, memory: false });
+      const requestedMcp = new Set(mcpCallNames || []);
+      const offeredMcp = listAvailableMcpTools(db, user.role).filter((tool) => requestedMcp.has(tool.callName));
+      const mcpPrompt = mcpToolsPrompt(offeredMcp);
       const system = [
         persona || (model.kind === "custom" ? `You are ${model.displayName}, a helpful, precise assistant.` : `You are ${brandName}, a helpful, precise assistant.`),
         spokenName
@@ -936,6 +967,7 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
           : "Do not output chain-of-thought.",
         userPrompt,
         toolPrompt,
+        mcpPrompt,
         folderPrompt,
         skillPrompt,
         canvas || openArtifact
@@ -1139,45 +1171,12 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
       let insideThink = false;
       let heldFence = "";
       function releaseVisible(delta: string) {
-        if (offerCode) return delta;
-        heldFence += delta;
-        let visible = "";
-        while (heldFence) {
-          const open = heldFence.indexOf("```");
-          if (open < 0) {
-            visible += heldFence;
-            heldFence = "";
-            break;
-          }
-          visible += heldFence.slice(0, open);
-          const rest = heldFence.slice(open);
-          const headerEnd = rest.indexOf("\n");
-          if (headerEnd < 0) {
-            heldFence = rest;
-            break;
-          }
-          const header = rest.slice(3, headerEnd).trim().toLowerCase();
-          if (header === "python-run" || header === "javascript-run" || header === "js-run") {
-            const close = rest.indexOf("```", headerEnd + 1);
-            if (close < 0) {
-              heldFence = rest;
-              break;
-            }
-            heldFence = rest.slice(close + 3);
-            continue;
-          }
-          visible += "```";
-          heldFence = rest.slice(3);
-        }
-        return visible;
+        const next = releaseAssistantDelta(heldFence, delta, offerCode);
+        heldFence = next.held;
+        return next.visible;
       }
       function flushHeldFence() {
-        if (!heldFence) return "";
-        if (/^```(?:python-run|javascript-run|js-run)/i.test(heldFence)) {
-          heldFence = "";
-          return "";
-        }
-        const rest = heldFence;
+        const rest = flushAssistantHeld(heldFence, offerCode);
         heldFence = "";
         return rest;
       }
@@ -1304,7 +1303,7 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
         userMessage: storedUser,
       };
       function publishContent(next: string) {
-        content = next;
+        content = redactSecrets(next, mcpSecrets);
         emit( "content", { reset: true, delta: content });
       }
       function showReply(text: string) {
@@ -1339,7 +1338,8 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
           content = peeled.visible;
         }
         const calls = parseToolCalls(`${content}\n${thinkingText}`);
-        if (!calls.length) break;
+        const mcpCalls = parseMcpCalls(`${content}\n${thinkingText}`).filter((call) => requestedMcp.has(call.name));
+        if (!calls.length && !mcpCalls.length) break;
         const results: string[] = [];
         if (calls.some((call) => call.name === "search_web" || call.name === "fetch_url")) {
           const note = activityNote(content);
@@ -1384,6 +1384,18 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
             if (call.name !== "search_web") recordToolRun(db, user.id, conversationId, call.name);
           } catch (error) {
             results.push(`${call.name}: ${error instanceof Error ? error.message : "Tool failed."}`);
+          }
+        }
+        for (const call of mcpCalls) {
+          emitWait("mcp");
+          try {
+            const out = await executeMcpTool(db, env, user, call, { signal: controller.signal });
+            activities.push({ kind: "mcp", server: out.serverName.slice(0, 80), tool: out.toolName.slice(0, 80) });
+            emitActivities();
+            results.push(out.modelText);
+            if (out.ran) recordToolRun(db, user.id, conversationId, "mcp");
+          } catch {
+            results.push("The MCP server could not be reached.");
           }
         }
         const resultText = results.join("\n\n");
@@ -1474,6 +1486,8 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
         usage.context = splitPromptTokens(usage.inputTokens, contextWeights);
       }
       aborts.delete(key);
+      content = redactSecrets(content, mcpSecrets);
+      thinkingText = redactSecrets(thinkingText, mcpSecrets);
       db.update(messages)
         .set({
           content,

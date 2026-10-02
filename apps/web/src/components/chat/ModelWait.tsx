@@ -1,9 +1,9 @@
 import { Loader } from "lucide-react";
 import { useT } from "@/lib/language";
 
-export type WaitStage = "searching" | "thinking" | "loading" | "prompt" | "running" | "memory" | "memorySearch" | "fetch" | "image" | "compacting";
+export type WaitStage = "searching" | "thinking" | "loading" | "prompt" | "running" | "memory" | "memorySearch" | "fetch" | "image" | "compacting" | "mcp";
 
-const WAIT_KEYS: Record<WaitStage, "waitSearching" | "thinkingDots" | "waitLoading" | "waitPrompt" | "waitRunning" | "waitMemory" | "waitMemorySearch" | "waitFetch" | "waitImage" | "waitCompacting"> = {
+const WAIT_KEYS: Record<WaitStage, "waitSearching" | "thinkingDots" | "waitLoading" | "waitPrompt" | "waitRunning" | "waitMemory" | "waitMemorySearch" | "waitFetch" | "waitImage" | "waitCompacting" | "waitMcp"> = {
   searching: "waitSearching",
   thinking: "thinkingDots",
   loading: "waitLoading",
@@ -14,6 +14,7 @@ const WAIT_KEYS: Record<WaitStage, "waitSearching" | "thinkingDots" | "waitLoadi
   fetch: "waitFetch",
   image: "waitImage",
   compacting: "waitCompacting",
+  mcp: "waitMcp",
 };
 
 export function isActivityWait(stage?: WaitStage) {
@@ -23,7 +24,8 @@ export function isActivityWait(stage?: WaitStage) {
     stage === "memory" ||
     stage === "memorySearch" ||
     stage === "fetch" ||
-    stage === "image"
+    stage === "image" ||
+    stage === "mcp"
   );
 }
 

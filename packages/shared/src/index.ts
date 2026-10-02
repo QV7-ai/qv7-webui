@@ -164,7 +164,50 @@ export function parseUsedMemories(raw: unknown): UsedMemory[] {
 export type ChatActivity =
   | { kind: "search"; query: string; sources: WebSearchSource[] }
   | { kind: "note"; text: string }
-  | { kind: "fetch"; url: string };
+  | { kind: "fetch"; url: string }
+  | { kind: "mcp"; server: string; tool: string };
+
+export type McpTransport = "http";
+export type McpAuthKind = "none" | "bearer" | "header";
+export type McpStatus = "unknown" | "ok" | "error";
+
+export type McpToolView = {
+  id: string;
+  serverId: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  inputSchema: Record<string, unknown>;
+};
+
+export type McpServerView = {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  transport: McpTransport;
+  endpoint: string;
+  authKind: McpAuthKind;
+  authHeader: string;
+  authConfigured: boolean;
+  status: McpStatus;
+  statusMessage: string;
+  lastCheckedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+  tools: McpToolView[];
+};
+
+export type McpAvailableTool = {
+  callName: string;
+  name: string;
+  description: string;
+  serverName: string;
+};
+
+export type McpPolicyView = {
+  allowHosts: string[];
+};
 
 export type WebSearchConfig = {
   enabled: boolean;
@@ -198,6 +241,7 @@ export type AppGeneralConfig = {
   toolCode: boolean;
   toolCanvas: boolean;
   toolWebpage: boolean;
+  toolMcp: boolean;
   freeDayTokens: number;
   freeWeekTokens: number;
   proDayTokens: number;
@@ -217,6 +261,7 @@ export type AppFeatures = {
   toolCode: boolean;
   toolCanvas: boolean;
   toolWebpage: boolean;
+  toolMcp: boolean;
 };
 
 export type ImageGenEngine = "imagerouter" | "openai" | "comfyui" | "automatic1111" | "gemini";
@@ -286,6 +331,7 @@ export const DEFAULT_APP_GENERAL: AppGeneralConfig = {
   toolCode: true,
   toolCanvas: true,
   toolWebpage: true,
+  toolMcp: true,
   freeDayTokens: 3_000_000,
   freeWeekTokens: 10_000_000,
   proDayTokens: 10_000_000,

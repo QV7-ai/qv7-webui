@@ -18,7 +18,7 @@ function TemporaryChatIcon() {
   );
 }
 import { useSidebarSwipe } from "@/lib/use-sidebar-swipe";
-import type { ChatModel, ChatFolder, ModelCategory, WebSearchSource, ChatActivity, AppFeatures, PublicBranding, UserSkill, UsedMemory, ArtifactAction, ArtifactFile, ArtifactType } from "@wlfv/shared";
+import type { ChatModel, ChatFolder, ModelCategory, WebSearchSource, ChatActivity, AppFeatures, PublicBranding, UserSkill, UsedMemory, ArtifactAction, ArtifactFile, ArtifactType, McpAvailableTool } from "@wlfv/shared";
 import { keepManualEdit } from "@wlfv/shared";
 import { DEFAULT_APP_GENERAL } from "@wlfv/shared";
 import { api } from "@/lib/api";
@@ -49,6 +49,7 @@ type QueuedMessage = {
   canvas: boolean;
   document: boolean;
   skillIds: string[];
+  mcpCallNames: string[];
 };
 
 type OpenFile = { title: string; type: ArtifactType; language: string; content: string };
@@ -240,6 +241,7 @@ export default function ChatPage({
     toolCode: true,
     toolCanvas: true,
     toolWebpage: true,
+    toolMcp: true,
   });
   const [webSearchOn, setWebSearchOn] = useState(false);
   const [createImageOn, setCreateImageOn] = useState(false);
@@ -248,6 +250,8 @@ export default function ChatPage({
   const [webSearchConfirm, setWebSearchConfirm] = useState(false);
   const [pendingSearch, setPendingSearch] = useState<string | null>(null);
   const [codeInterpreterOn, setCodeInterpreterOn] = useState(false);
+  const [mcpTools, setMcpTools] = useState<McpAvailableTool[]>([]);
+  const [selectedMcpIds, setSelectedMcpIds] = useState<string[]>([]);
   const [skills, setSkills] = useState<UserSkill[]>([]);
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [canvasOn, setCanvasOn] = useState(false);
@@ -564,6 +568,10 @@ export default function ChatPage({
     setSearchParams(next, { replace: true });
   }, [searchParams, isAdmin, setSearchParams]);
 
+  const refreshMcpTools = useCallback(() => {
+    api.get("/api/mcp/tools").then((data) => setMcpTools(Array.isArray(data.tools) ? data.tools : [])).catch(() => setMcpTools([]));
+  }, []);
+
   useEffect(() => {
     refreshModels().catch(() => undefined);
     refreshLoaded().catch(() => undefined);
@@ -572,7 +580,8 @@ export default function ChatPage({
     refreshSettings().catch(() => undefined);
     refreshWebSearch().catch(() => undefined);
     refreshSkills().catch(() => undefined);
-  }, [refreshChats, refreshFolders, refreshLoaded, refreshModels, refreshSettings, refreshWebSearch, refreshSkills]);
+    refreshMcpTools();
+  }, [refreshChats, refreshFolders, refreshLoaded, refreshModels, refreshSettings, refreshWebSearch, refreshSkills, refreshMcpTools]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -754,6 +763,7 @@ export default function ChatPage({
       canvas?: boolean;
       document?: boolean;
       skillIds?: string[];
+      mcpCallNames?: string[];
       artifactAction?: ArtifactAction;
     },
   ) {
@@ -775,6 +785,7 @@ export default function ChatPage({
         canvas: next.canvas,
         document: next.document,
         skillIds: next.skillIds,
+        mcpCallNames: next.mcpCallNames,
       });
       return;
     }
@@ -799,6 +810,7 @@ export default function ChatPage({
           canvas: options?.canvas ?? canvasOn,
           document: options?.document ?? documentOn,
           skillIds: options?.skillIds ?? selectedSkillIds,
+          mcpCallNames: options?.mcpCallNames ?? selectedMcpIds,
         },
       ]);
       setDraft("");
@@ -914,6 +926,7 @@ export default function ChatPage({
           artifactContent: useCanvas && canvasOpen ? draftRef.current : undefined,
           artifactAction: options?.artifactAction,
           skillIds: options?.skillIds ?? selectedSkillIds,
+          mcpCallNames: options?.mcpCallNames ?? selectedMcpIds,
           attachments: pendingAttachments.map((item) => ({
             name: item.name,
             text: item.text,
@@ -955,7 +968,7 @@ export default function ChatPage({
             reset?: boolean;
             message?: string;
             title?: string;
-            stage?: "loading" | "prompt" | "searching" | "thinking" | "running" | "memory" | "memorySearch" | "fetch" | "image" | "compacting";
+            stage?: "loading" | "prompt" | "searching" | "thinking" | "running" | "memory" | "memorySearch" | "fetch" | "image" | "compacting" | "mcp";
             usage?: UiMessage["usage"];
             sources?: WebSearchSource[];
             activities?: ChatActivity[];
@@ -1063,6 +1076,7 @@ export default function ChatPage({
         canvas: next.canvas,
         document: next.document,
         skillIds: next.skillIds,
+        mcpCallNames: next.mcpCallNames,
       });
     }
   }
@@ -1085,6 +1099,7 @@ export default function ChatPage({
       canvas: item.canvas,
       document: item.document,
       skillIds: item.skillIds,
+      mcpCallNames: item.mcpCallNames,
     });
   }
 
@@ -1294,6 +1309,12 @@ export default function ChatPage({
           onToggleSkill={(id) =>
             setSelectedSkillIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
           }
+          mcpTools={mcpTools}
+          selectedMcpIds={selectedMcpIds}
+          onToggleMcp={(callName) =>
+            setSelectedMcpIds((current) => (current.includes(callName) ? current.filter((item) => item !== callName) : [...current, callName].slice(0, 12)))
+          }
+          onRefreshMcp={refreshMcpTools}
           toolPermissionsEnabled={features.toolPermissionsEnabled}
           toolPermission={features.toolPermissionsEnabled ? toolPermission : null}
           onToolPermission={setToolPermission}

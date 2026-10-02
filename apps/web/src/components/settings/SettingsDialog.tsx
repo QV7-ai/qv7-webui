@@ -14,6 +14,7 @@ import { AuthPanel } from "@/components/settings/AuthPanel";
 import { UsersPanel } from "@/components/settings/UsersPanel";
 import { WebSearchPanel } from "@/components/settings/WebSearchPanel";
 import { ImagesPanel } from "@/components/settings/ImagesPanel";
+import { McpPanel } from "@/components/settings/McpPanel";
 import { GeneralPanel } from "@/components/settings/GeneralPanel";
 import { MemoryPanel } from "@/components/settings/MemoryPanel";
 import { UsagePanel } from "@/components/settings/UsagePanel";
@@ -21,7 +22,7 @@ import { applyMotion, applyTheme, applyTextSize, t, type UiLang } from "@/lib/i1
 import { useLang } from "@/lib/language";
 import { isPhoneViewport, PHONE_QUERY } from "@/lib/layout";
 
-type Tab = "general" | "usage" | "memory" | "account" | "admin-general" | "branding" | "interface" | "authentication" | "connections" | "users" | "web-search" | "images" | "database" | "admin";
+type Tab = "general" | "usage" | "memory" | "account" | "admin-general" | "branding" | "interface" | "authentication" | "connections" | "users" | "web-search" | "images" | "mcp" | "database" | "admin";
 
 const SETTING_TERMS: Record<Tab, Parameters<typeof t>[1][]> = {
   general: ["theme", "dark", "light", "oled", "system", "language", "english", "dutch", "textSize", "showUsage", "showUsageHint", "loadToolsWhenNeeded", "animations", "systemPrompt", "advanced", "modelParameters"],
@@ -36,6 +37,7 @@ const SETTING_TERMS: Record<Tab, Parameters<typeof t>[1][]> = {
   users: ["users", "searchUsers", "addUser", "planUsage", "resetUsage"],
   "web-search": ["webSearchTitle", "webSearchConfirm", "webSearchEngine"],
   images: ["imagesTitle", "imageGeneration", "createImage", "editImage", "imageModel", "imageApiKey", "engineComfyUi", "engineGemini"],
+  mcp: ["mcpTitle", "mcpAddServer", "mcpTest", "mcpDiscover", "mcpTools"],
   database: ["importConfig", "exportConfig", "databaseFile", "allChats"],
   admin: ["models", "modelCategories", "defaultTools", "thinking", "searchModels"],
 };
@@ -96,6 +98,7 @@ export function SettingsDialog({
     toolCode: true,
     toolCanvas: true,
     toolWebpage: true,
+    toolMcp: true,
   });
 
   const generalNav: { id: Tab; label: string; badge?: string }[] = [
@@ -115,6 +118,7 @@ export function SettingsDialog({
         { id: "admin", label: t(language, "modelsNav") },
         { id: "web-search", label: t(language, "webSearch") },
         { id: "images", label: t(language, "imagesNav") },
+        { id: "mcp", label: t(language, "mcpTitle") },
         { id: "authentication", label: t(language, "authentication") },
         { id: "users", label: t(language, "users") },
         { id: "database", label: t(language, "databaseNav") },
@@ -145,6 +149,7 @@ export function SettingsDialog({
           initialTab === "users" ||
           initialTab === "web-search" ||
           initialTab === "images" ||
+          initialTab === "mcp" ||
           initialTab === "database" ||
           initialTab === "admin-general" ||
           initialTab === "branding" ||
@@ -264,6 +269,7 @@ export function SettingsDialog({
               toolCode: config.toolCode,
               toolCanvas: config.toolCanvas,
               toolWebpage: config.toolWebpage,
+              toolMcp: config.toolMcp,
             };
             setFeatures(next);
             onFeaturesChange?.(next);
@@ -289,6 +295,7 @@ export function SettingsDialog({
       {tab === "users" && isAdmin ? <UsersPanel currentUserId={accountId} /> : null}
       {tab === "web-search" && isAdmin ? <WebSearchPanel /> : null}
       {tab === "images" && isAdmin ? <ImagesPanel /> : null}
+      {tab === "mcp" && isAdmin ? <McpPanel /> : null}
       {tab === "database" && isAdmin ? <DatabasePanel /> : null}
       {tab === "admin" && isAdmin ? (
         <div>

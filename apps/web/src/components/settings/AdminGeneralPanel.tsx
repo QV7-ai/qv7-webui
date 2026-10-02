@@ -136,6 +136,12 @@ export function AdminGeneralPanel({ onChange }: { onChange?: (config: AppGeneral
           checked={config.toolWebpage}
           onChange={(toolWebpage) => setConfig({ ...config, toolWebpage })}
         />
+        <Toggle
+          title={tr("mcpTools")}
+          hint={tr("toolMcpHint")}
+          checked={config.toolMcp}
+          onChange={(toolMcp) => setConfig({ ...config, toolMcp })}
+        />
       </div>
       <Field title={tr("maxFolderCount")} hint={tr("maxFolderCountHint")}>
         <input

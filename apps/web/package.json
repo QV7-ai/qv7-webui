@@ -8,7 +8,7 @@
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test src/components/chat/memory-used.test.tsx src/components/chat/artifact.test.tsx src/components/chat/web-preview.test.ts"
+    "test": "tsx --test src/components/chat/memory-used.test.tsx src/components/chat/artifact.test.tsx src/components/chat/web-preview.test.ts src/components/settings/mcp-panel.test.ts"
   },
   "dependencies": {
     "@wlfv/shared": "*",

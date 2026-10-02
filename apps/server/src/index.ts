@@ -32,6 +32,7 @@ import { registerAttachments } from "./attachments.ts";
 import { registerImages } from "./images/index.ts";
 import { registerCanvases } from "./canvases.ts";
 import { registerArtifacts } from "./artifacts.ts";
+import { registerMcp } from "./mcp/api.ts";
 
 async function main() {
   const env = loadEnv();
@@ -91,6 +92,7 @@ async function main() {
   registerConnections(app, db, env);
   registerCanvases(app, db);
   registerArtifacts(app, db);
+  registerMcp(app, db, env);
 
   const here = path.dirname(fileURLToPath(import.meta.url));
   const webDist = [path.resolve(here, "../../web/dist"), path.resolve(process.cwd(), "../web/dist"), path.resolve(process.cwd(), "apps/web/dist")].find(

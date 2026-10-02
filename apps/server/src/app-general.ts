@@ -25,6 +25,7 @@ export function normalizeAppGeneral(raw: unknown): AppGeneralConfig {
     toolCode: input.toolCode !== false,
     toolCanvas: input.toolCanvas !== false,
     toolWebpage: input.toolWebpage !== false,
+    toolMcp: input.toolMcp !== false,
     freeDayTokens: Math.min(1_000_000_000_000, Math.max(0, Math.round(asNumber(input.freeDayTokens, DEFAULT_APP_GENERAL.freeDayTokens)))),
     freeWeekTokens: Math.min(1_000_000_000_000, Math.max(0, Math.round(asNumber(input.freeWeekTokens, DEFAULT_APP_GENERAL.freeWeekTokens)))),
     proDayTokens: Math.min(1_000_000_000_000, Math.max(0, Math.round(asNumber(input.proDayTokens, DEFAULT_APP_GENERAL.proDayTokens)))),
@@ -66,6 +67,7 @@ export function publicFeatures(config: AppGeneralConfig): AppFeatures {
     toolCode: config.toolCode,
     toolCanvas: config.toolCanvas,
     toolWebpage: config.toolWebpage,
+    toolMcp: config.toolMcp,
   };
 }
 

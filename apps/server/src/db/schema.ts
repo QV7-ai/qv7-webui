@@ -219,6 +219,36 @@ export const artifactVersions = sqliteTable("artifact_versions", {
   source: text("source").notNull(),
 });
 
+export const mcpServers = sqliteTable("mcp_servers", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  enabled: integer("enabled").notNull().default(0),
+  transport: text("transport").notNull().default("http"),
+  url: text("url").notNull(),
+  authKind: text("auth_kind").notNull().default("none"),
+  authHeader: text("auth_header").notNull().default(""),
+  secretEnc: text("secret_enc").notNull().default(""),
+  status: text("status").notNull().default("unknown"),
+  statusMessage: text("status_message").notNull().default(""),
+  lastCheckedAt: integer("last_checked_at"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export const mcpTools = sqliteTable("mcp_tools", {
+  id: text("id").primaryKey(),
+  serverId: text("server_id")
+    .notNull()
+    .references(() => mcpServers.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  inputSchema: text("input_schema").notNull().default("{}"),
+  enabled: integer("enabled").notNull().default(0),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
 export const toolRuns = sqliteTable("tool_runs", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),

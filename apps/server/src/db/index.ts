@@ -345,6 +345,33 @@ export function openDb(env: Env) {
       source TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS artifact_versions_artifact ON artifact_versions(artifact_id, version);
+    CREATE TABLE IF NOT EXISTS mcp_servers (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      enabled INTEGER NOT NULL DEFAULT 0,
+      transport TEXT NOT NULL DEFAULT 'http',
+      url TEXT NOT NULL,
+      auth_kind TEXT NOT NULL DEFAULT 'none',
+      auth_header TEXT NOT NULL DEFAULT '',
+      secret_enc TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'unknown',
+      status_message TEXT NOT NULL DEFAULT '',
+      last_checked_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS mcp_tools (
+      id TEXT PRIMARY KEY,
+      server_id TEXT NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      input_schema TEXT NOT NULL DEFAULT '{}',
+      enabled INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS mcp_tools_server_name ON mcp_tools(server_id, name);
     CREATE TABLE IF NOT EXISTS canvas_shares (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -380,6 +407,11 @@ export function databasePath() {
 
 export function checkpointDatabase() {
   sqliteHandle?.pragma("wal_checkpoint(TRUNCATE)");
+}
+
+export function closeDb() {
+  sqliteHandle?.close();
+  sqliteHandle = null;
 }
 
 export type DB = ReturnType<typeof openDb>;
