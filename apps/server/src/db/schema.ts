@@ -103,6 +103,8 @@ export const conversations = sqliteTable("conversations", {
   pinned: integer("pinned").notNull().default(0),
   unread: integer("unread").notNull().default(0),
   temporary: integer("temporary").notNull().default(0),
+  contextSummary: text("context_summary").notNull().default(""),
+  contextSummaryUntil: text("context_summary_until"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -120,6 +122,7 @@ export const messages = sqliteTable("messages", {
   stats: text("stats"),
   sources: text("sources"),
   activities: text("activities"),
+  memoriesUsed: text("memories_used"),
   rating: integer("rating").notNull().default(0),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
@@ -180,6 +183,14 @@ export const appSettings = sqliteTable("app_settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
   updatedAt: integer("updated_at").notNull(),
+});
+
+export const canvasShares = sqliteTable("canvas_shares", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  html: text("html").notNull(),
+  createdAt: integer("created_at").notNull(),
 });
 
 export const toolRuns = sqliteTable("tool_runs", {

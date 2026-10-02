@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useMatch, useNavigate, useSearchParams } from "react-router-dom";
-import { Menu, X } from "lucide-react";
+import { Menu } from "lucide-react";
+import { MessageQueue } from "@/components/composer/MessageQueue";
 
 function TemporaryChatIcon() {
   return (
@@ -17,7 +18,7 @@ function TemporaryChatIcon() {
   );
 }
 import { useSidebarSwipe } from "@/lib/use-sidebar-swipe";
-import type { ChatModel, ChatFolder, ModelCategory, WebSearchSource, ChatActivity, AppFeatures, PublicBranding, UserSkill } from "@wlfv/shared";
+import type { ChatModel, ChatFolder, ModelCategory, WebSearchSource, ChatActivity, AppFeatures, PublicBranding, UserSkill, UsedMemory } from "@wlfv/shared";
 import { DEFAULT_APP_GENERAL } from "@wlfv/shared";
 import { api } from "@/lib/api";
 import { applyMotion, applyTheme, applyTextSize } from "@/lib/i18n";
@@ -26,9 +27,11 @@ import { PHONE_QUERY } from "@/lib/layout";
 import { Sidebar, type ChatSummary } from "@/components/sidebar/Sidebar";
 import { ModelSelector } from "@/components/models/ModelSelector";
 import { Composer, type ComposerAttachment } from "@/components/composer/Composer";
-import { MessageList, splitUserContent, type UiMessage } from "@/components/chat/MessageList";
+import { MessageList, listCanvasVersions, splitUserContent, type UiMessage } from "@/components/chat/MessageList";
+import { attachMemoryUsed } from "@/components/chat/memory-used";
+import { parseUsedMemories } from "@wlfv/shared";
 import { CanvasPanel } from "@/components/chat/CanvasPanel";
-import { parseCanvases, type CanvasDoc } from "@wlfv/shared";
+import { type CanvasDoc } from "@wlfv/shared";
 import { SkillsPage } from "@/components/skills/SkillsDialog";
 import { CommandPalette } from "@/components/command-palette/CommandPalette";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
@@ -57,6 +60,10 @@ type ChatStreamPayload = {
   usage?: UiMessage["usage"];
   sources?: WebSearchSource[];
   activities?: ChatActivity[];
+  memories?: UsedMemory[];
+  memoriesUsed?: UsedMemory[];
+  memoryUsed?: boolean;
+  memoryIds?: string[];
   assistantId?: string;
   conversationId?: string;
   userMessage?: { id: string; content: string; createdAt?: number };
@@ -96,6 +103,10 @@ function upsertRemoteTurn(prev: UiMessage[], json: ChatStreamPayload): UiMessage
     wait: json.wait || json.stage || "loading",
     sources: json.sources,
     activities: json.activities,
+    memoriesUsed: (() => {
+      const parsed = parseUsedMemories(json.memoriesUsed);
+      return parsed.length ? parsed : existing?.memoriesUsed;
+    })(),
     canvas: existing?.canvas,
     createdAt: json.assistantCreatedAt || existing?.createdAt,
   };
@@ -124,6 +135,7 @@ function applyRemoteChatEvent(prev: UiMessage[], ev: string, json: ChatStreamPay
   if (ev === "activity" && json.activities) {
     return prev.map((m) => (m.id === assistantId ? { ...m, activities: json.activities } : m));
   }
+  if (ev === "memoryUsed") return attachMemoryUsed(prev, assistantId, json);
   if (ev === "thinking") {
     return prev.map((m) =>
       m.id === assistantId ? { ...m, thinking: (m.thinking || "") + (json.delta || ""), streaming: true } : m,
@@ -137,7 +149,7 @@ function applyRemoteChatEvent(prev: UiMessage[], ev: string, json: ChatStreamPay
     );
   }
   if (ev === "done") {
-    return prev.map((m) =>
+    return attachMemoryUsed(prev, assistantId, json).map((m) =>
       m.id === assistantId ? { ...m, streaming: false, wait: undefined, usage: json.usage || m.usage } : m,
     );
   }
@@ -238,7 +250,10 @@ export default function ChatPage({
   const [documentOn, setDocumentOn] = useState(false);
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [canvasDoc, setCanvasDoc] = useState<CanvasDoc | null>(null);
+  const [canvasVersion, setCanvasVersion] = useState(0);
   const canvasDirty = useRef(false);
+  const canvasFollow = useRef(true);
+  const canvasVersionRef = useRef(0);
   const canvasMsgId = useRef("");
   const canvasHold = useRef(false);
   const canvasDismissed = useRef("");
@@ -252,6 +267,8 @@ export default function ChatPage({
   const stick = useRef(true);
   const scrollLock = useRef(false);
   const scrollGen = useRef(0);
+  const userHold = useRef(false);
+  const holdScrollTop = useRef(0);
   const followedAssistant = useRef<string | null>(null);
   const skipLoadRef = useRef(false);
   const createdIdRef = useRef<string | null>(null);
@@ -277,6 +294,54 @@ export default function ChatPage({
     setTemporary(false);
   }, [conversationId]);
 
+  function noteStick(el: HTMLElement) {
+    stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }
+
+  function pinToBottom() {
+    const el = scroller.current;
+    if (!el || !stick.current || userHold.current) return;
+    const token = ++scrollGen.current;
+    scrollLock.current = true;
+    el.scrollTop = el.scrollHeight;
+    requestAnimationFrame(() => {
+      if (scrollGen.current !== token || !scroller.current || userHold.current || !stick.current) {
+        if (scrollGen.current === token) scrollLock.current = false;
+        return;
+      }
+      scroller.current.scrollTop = scroller.current.scrollHeight;
+      requestAnimationFrame(() => {
+        if (scrollGen.current === token) scrollLock.current = false;
+      });
+    });
+  }
+
+  function markHold() {
+    userHold.current = true;
+    holdScrollTop.current = scroller.current?.scrollTop ?? 0;
+  }
+
+  function holdPointer(event: { pointerType: string }) {
+    if (event.pointerType === "touch") return;
+    markHold();
+  }
+
+  function releasePointer(event: { pointerType: string }) {
+    if (event.pointerType === "touch") return;
+    endHold();
+  }
+
+  function endHold() {
+    userHold.current = false;
+    const el = scroller.current;
+    if (!el) return;
+    if (!stick.current) {
+      noteStick(el);
+      return;
+    }
+    pinToBottom();
+  }
+
   useEffect(() => {
     const last = [...messages].reverse().find((message) => message.role === "assistant");
     if (!last) return;
@@ -284,34 +349,14 @@ export default function ChatPage({
       followedAssistant.current = last.id;
       stick.current = true;
     }
-    if (!stick.current) return;
-    const el = scroller.current;
-    if (!el) return;
-    const token = ++scrollGen.current;
-    scrollLock.current = true;
-    el.scrollTop = el.scrollHeight;
-    requestAnimationFrame(() => {
-      if (scrollGen.current !== token || !scroller.current) return;
-      scroller.current.scrollTop = scroller.current.scrollHeight;
-      requestAnimationFrame(() => {
-        if (scrollGen.current === token) scrollLock.current = false;
-      });
-    });
+    pinToBottom();
   }, [messages]);
 
   useEffect(() => {
     const el = scroller.current;
     const inner = el?.firstElementChild;
     if (!el || !inner) return;
-    const observer = new ResizeObserver(() => {
-      if (!stick.current || !scroller.current) return;
-      const token = ++scrollGen.current;
-      scrollLock.current = true;
-      scroller.current.scrollTop = scroller.current.scrollHeight;
-      requestAnimationFrame(() => {
-        if (scrollGen.current === token) scrollLock.current = false;
-      });
-    });
+    const observer = new ResizeObserver(() => pinToBottom());
     observer.observe(inner);
     return () => observer.disconnect();
   }, [messages.length, conversationId]);
@@ -398,25 +443,49 @@ export default function ChatPage({
     canvasMsgId.current = "";
     canvasHold.current = true;
     canvasDismissed.current = "";
+    canvasFollow.current = true;
+    canvasVersionRef.current = 0;
+    setCanvasVersion(0);
     setCanvasOpen(false);
   }, [conversationId]);
 
+  function showCanvasVersion(index: number) {
+    const list = listCanvasVersions(messages);
+    const item = list[index];
+    if (!item) return;
+    const latest = index === list.length - 1;
+    canvasFollow.current = latest;
+    canvasDirty.current = !latest;
+    canvasVersionRef.current = index;
+    canvasMsgId.current = item.messageId;
+    canvasDismissed.current = "";
+    setCanvasVersion(index);
+    setCanvasDoc(item.doc);
+    setCanvasOpen(true);
+  }
+
   useEffect(() => {
-    const msg = [...messages].reverse().find((item) => item.role === "assistant" && item.canvas && parseCanvases(item.content).length);
+    const list = listCanvasVersions(messages);
     if (canvasHold.current) {
       if (!messages.length) return;
       canvasHold.current = false;
-      canvasMsgId.current = msg?.id || "";
+      const last = list.at(-1);
+      canvasMsgId.current = last?.messageId || "";
+      canvasVersionRef.current = Math.max(0, list.length - 1);
+      setCanvasVersion(canvasVersionRef.current);
       return;
     }
-    if (!msg) return;
-    const doc = parseCanvases(msg.content).at(-1);
-    if (!doc) return;
-    if (canvasMsgId.current !== msg.id) canvasDirty.current = false;
-    if (canvasDirty.current && canvasMsgId.current === msg.id) return;
-    canvasMsgId.current = msg.id;
-    setCanvasDoc(doc);
-    if (canvasDismissed.current === msg.id) return;
+    if (!list.length) return;
+    const index = canvasFollow.current ? list.length - 1 : Math.min(canvasVersionRef.current, list.length - 1);
+    const item = list[index];
+    if (!item) return;
+    if (canvasMsgId.current !== item.messageId) canvasDirty.current = false;
+    if (canvasDirty.current && canvasMsgId.current === item.messageId) return;
+    canvasMsgId.current = item.messageId;
+    canvasVersionRef.current = index;
+    setCanvasVersion(index);
+    setCanvasDoc(item.doc);
+    if (canvasDismissed.current === item.messageId) return;
     setCanvasOpen(true);
   }, [messages]);
 
@@ -511,7 +580,7 @@ export default function ChatPage({
         if (ev === "ping" || ev === "ready" || ev === "memory") return;
         setMessages((prev) => applyRemoteChatEvent(prev, ev, json));
       };
-      for (const name of ["start", "snapshot", "status", "sources", "activity", "thinking", "content", "error", "title", "done"]) {
+      for (const name of ["start", "snapshot", "status", "sources", "activity", "memoryUsed", "thinking", "content", "error", "title", "done"]) {
         const handler = onEvent(name) as EventListener;
         source.addEventListener(name, handler);
         handlers.push({ name, handler });
@@ -813,10 +882,13 @@ export default function ChatPage({
             reset?: boolean;
             message?: string;
             title?: string;
-            stage?: "loading" | "prompt" | "searching" | "thinking" | "running" | "memory" | "memorySearch" | "fetch" | "image";
+            stage?: "loading" | "prompt" | "searching" | "thinking" | "running" | "memory" | "memorySearch" | "fetch" | "image" | "compacting";
             usage?: UiMessage["usage"];
             sources?: WebSearchSource[];
             activities?: ChatActivity[];
+            memories?: UiMessage["memoriesUsed"];
+            memoryUsed?: boolean;
+            memoryIds?: string[];
             saved?: string[];
             assistantId?: string;
             messageId?: string;
@@ -830,6 +902,8 @@ export default function ChatPage({
             setMessages((prev) => touch(prev, { sources: json.sources }));
           } else if (ev === "activity" && json.activities) {
             setMessages((prev) => touch(prev, { activities: json.activities }));
+          } else if (ev === "memoryUsed") {
+            setMessages((prev) => attachMemoryUsed(prev, targetId, json));
           } else if (ev === "thinking") {
             setMessages((prev) =>
               prev.map((m) =>
@@ -852,7 +926,7 @@ export default function ChatPage({
             const nextId = json.messageId || targetId;
             serverMessageId = nextId;
             setMessages((prev) =>
-              prev.map((m) =>
+              attachMemoryUsed(prev, targetId, json).map((m) =>
                 m.id === targetId || m.id === asst.id ? { ...m, id: nextId, streaming: false, usage: json.usage || m.usage } : m,
               ),
             );
@@ -870,10 +944,7 @@ export default function ChatPage({
       if (abortRef.current === controller) abortRef.current = null;
       refreshChats().catch(() => undefined);
       refreshLoaded().catch(() => undefined);
-      if (gen !== sendGenRef.current) {
-        localStreamRef.current = false;
-        return;
-      }
+      if (gen !== sendGenRef.current) return;
       busyRef.current = false;
       localStreamRef.current = false;
       setBusy(false);
@@ -895,6 +966,27 @@ export default function ChatPage({
         skillIds: next.skillIds,
       });
     }
+  }
+
+  function editQueued(id: string, text: string) {
+    setQueueState(queueRef.current.map((item) => (item.id === id ? { ...item, text } : item)));
+  }
+
+  async function sendQueuedNow(id: string) {
+    const item = queueRef.current.find((queued) => queued.id === id);
+    if (!item) return;
+    setQueueState(queueRef.current.filter((queued) => queued.id !== id));
+    if (busyRef.current) await stop();
+    await send(item.text, {
+      search: item.search,
+      attachments: item.attachments,
+      fromQueue: true,
+      createImage: item.createImage,
+      editImage: item.editImage,
+      canvas: item.canvas,
+      document: item.document,
+      skillIds: item.skillIds,
+    });
   }
 
   async function stop() {
@@ -951,33 +1043,13 @@ export default function ChatPage({
     return (
       <>
         {error ? <p className="mb-2 text-[13px] text-[var(--danger)]">{error}</p> : null}
-        {queue.length ? (
-          <div className="flex flex-wrap items-center gap-1.5 pb-2">
-            <span className="text-[11px] text-[var(--secondary)]">
-              {tr("queued")} {queue.length}/{MAX_QUEUE}
-            </span>
-            {queue.map((item) => {
-              const label = (item.text || item.attachments.map((file) => file.name).join(", ") || "…").replace(/\s+/g, " ").trim();
-              return (
-                <span
-                  key={item.id}
-                  className="flex max-w-[180px] items-center gap-1 rounded-full bg-[var(--surface)] py-0.5 pl-2.5 pr-1 text-[12px]"
-                  title={label}
-                >
-                  <span className="min-w-0 truncate">{label}</span>
-                  <button
-                    type="button"
-                    className="rounded-full p-0.5 text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
-                    aria-label={tr("removeFromQueue")}
-                    onClick={() => setQueueState(queueRef.current.filter((queued) => queued.id !== item.id))}
-                  >
-                    <X size={12} />
-                  </button>
-                </span>
-              );
-            })}
-          </div>
-        ) : null}
+        <MessageQueue
+          items={queue}
+          max={MAX_QUEUE}
+          onEdit={editQueued}
+          onRemove={(id) => setQueueState(queueRef.current.filter((queued) => queued.id !== id))}
+          onSendNow={(id) => void sendQueuedNow(id)}
+        />
         <Composer
           value={draft}
           onChange={setDraft}
@@ -1196,11 +1268,22 @@ export default function ChatPage({
           <>
         <div
           ref={scroller}
-          className="chat-scroll min-h-0 min-w-0 w-full flex-1 overflow-x-hidden overflow-y-auto"
+          className="chat-scroll min-h-0 min-w-0 w-full flex-1 touch-pan-y overflow-x-clip overflow-y-auto"
+          onPointerDown={holdPointer}
+          onPointerUp={releasePointer}
+          onTouchStart={markHold}
+          onTouchEnd={endHold}
+          onTouchCancel={endHold}
+          onWheel={(e) => {
+            if (e.deltaY < 0) stick.current = false;
+          }}
           onScroll={(e) => {
-            if (scrollLock.current) return;
             const el = e.currentTarget;
-            stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+            if (userHold.current) {
+              if (el.scrollTop < holdScrollTop.current - 2) stick.current = false;
+              return;
+            }
+            if (!scrollLock.current) noteStick(el);
           }}
         >
           <div className="chat-shell flex min-h-full flex-col px-4">
@@ -1218,12 +1301,7 @@ export default function ChatPage({
                 const last = [...messages].reverse().find((m) => m.role === "user");
                 if (last) void send(last.content);
               }}
-              onOpenCanvas={(doc) => {
-                canvasDismissed.current = "";
-                canvasDirty.current = true;
-                setCanvasDoc(doc);
-                setCanvasOpen(true);
-              }}
+              onOpenCanvas={(_doc, index) => showCanvasVersion(index)}
               onRate={(id, rating) => {
                 const previous = messages.find((message) => message.id === id)?.rating || 0;
                 setMessages((prev) => prev.map((message) => (message.id === id ? { ...message, rating } : message)));
@@ -1241,6 +1319,11 @@ export default function ChatPage({
         {canvasOpen && canvasDoc ? (
           <CanvasPanel
             doc={canvasDoc}
+            shareBase={features.webUiUrl}
+            canShare={features.sharingEnabled}
+            versionIndex={canvasVersion}
+            versionCount={listCanvasVersions(messages).length}
+            onVersion={showCanvasVersion}
             onChange={(html) => {
               canvasDirty.current = true;
               setCanvasDoc((current) => (current ? { ...current, html } : current));

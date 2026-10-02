@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { ChatActivity, WebSearchSource } from "@wlfv/shared";
+import { parseUsedMemories, type ChatActivity, type UsedMemory, type WebSearchSource } from "@wlfv/shared";
 
 export const SSE_HEADERS = {
   "Content-Type": "text/event-stream",
@@ -21,6 +21,7 @@ export type LiveTurn = {
   wait?: string;
   sources?: WebSearchSource[];
   activities?: ChatActivity[];
+  memoriesUsed?: UsedMemory[];
 };
 
 const liveTurns = new Map<string, LiveTurn>();
@@ -102,6 +103,7 @@ export function emitChat(origin: SseRaw, conversationId: string, event: string, 
       stage?: string;
       sources?: WebSearchSource[];
       activities?: ChatActivity[];
+      memories?: UsedMemory[];
     };
     if (event === "content") {
       live.content = payload.reset ? payload.delta || "" : live.content + (payload.delta || "");
@@ -113,6 +115,9 @@ export function emitChat(origin: SseRaw, conversationId: string, event: string, 
       live.sources = payload.sources;
     } else if (event === "activity" && payload.activities) {
       live.activities = payload.activities;
+    } else if (event === "memoryUsed" || event === "done") {
+      const memories = parseUsedMemories(payload.memories);
+      if (memories.length) live.memoriesUsed = memories;
     }
   }
   const fanout =
@@ -129,7 +134,7 @@ export function endLiveTurn(conversationId: string) {
   liveTurns.delete(conversationId);
 }
 
-export function overlayLiveMessages<T extends { id: string; content: string; thinking?: string | null; status?: string; sources?: WebSearchSource[]; activities?: ChatActivity[] }>(
+export function overlayLiveMessages<T extends { id: string; content: string; thinking?: string | null; status?: string; sources?: WebSearchSource[]; activities?: ChatActivity[]; memoriesUsed?: UsedMemory[] }>(
   conversationId: string,
   msgs: T[],
 ): T[] {
@@ -144,6 +149,7 @@ export function overlayLiveMessages<T extends { id: string; content: string; thi
       status: "streaming",
       sources: live.sources ?? m.sources,
       activities: live.activities ?? m.activities,
+      memoriesUsed: live.memoriesUsed ?? m.memoriesUsed,
     };
   });
 }
@@ -175,6 +181,7 @@ export function subscribeConversation(conversationId: string, raw: SseRaw, req: 
       wait: live.wait,
       sources: live.sources,
       activities: live.activities,
+      memoriesUsed: live.memoriesUsed,
     });
   } else {
     writeSse(raw, "ready", { conversationId });

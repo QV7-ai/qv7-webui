@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { applyPublicBranding } from "@/lib/branding";
 import { rememberBrandingTheme } from "@/lib/theme";
 import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar";
+import { useAutoSave } from "@/components/settings/useAutoSave";
 import { ThemeMaker } from "@/components/settings/ThemeMaker";
 import { useT } from "@/lib/language";
 
@@ -97,8 +98,6 @@ export function BrandingPanel({ onChange }: { onChange?: (branding: PublicBrandi
   const [clearLogo, setClearLogo] = useState(false);
   const [clearFavicon, setClearFavicon] = useState(false);
   const [clearSplash, setClearSplash] = useState(false);
-  const [status, setStatus] = useState("");
-  const [saving, setSaving] = useState(false);
   const [ready, setReady] = useState(false);
   const [themeMode, setThemeMode] = useState<"dark" | "light">("dark");
   const saved = useRef<PublicBranding | null>(null);
@@ -152,22 +151,34 @@ export function BrandingPanel({ onChange }: { onChange?: (branding: PublicBrandi
     return () => URL.revokeObjectURL(url);
   }, [pendingSplash]);
 
-  async function save() {
-    setSaving(true);
-    try {
+  const draftRef = useRef({ config, pendingLogo, pendingFavicon, pendingSplash, clearLogo, clearFavicon, clearSplash });
+  draftRef.current = { config, pendingLogo, pendingFavicon, pendingSplash, clearLogo, clearFavicon, clearSplash };
+  const { saving, status } = useAutoSave(
+    {
+      config,
+      clearLogo,
+      clearFavicon,
+      clearSplash,
+      logo: pendingLogo ? `${pendingLogo.name}:${pendingLogo.size}:${pendingLogo.lastModified}` : "",
+      favicon: pendingFavicon ? `${pendingFavicon.name}:${pendingFavicon.size}:${pendingFavicon.lastModified}` : "",
+      splash: pendingSplash ? `${pendingSplash.name}:${pendingSplash.size}:${pendingSplash.lastModified}` : "",
+    },
+    ready,
+    async () => {
+      const current = draftRef.current;
       let data = await api.send("/api/admin/branding", "PATCH", {
-        name: config.name,
-        description: config.description,
-        accent: config.theme.enabled ? config.theme.dark.accent : config.accent,
-        theme: config.theme,
-        footer: config.footer,
-        clearLogo,
-        clearFavicon,
-        clearSplash,
+        name: current.config.name,
+        description: current.config.description,
+        accent: current.config.theme.enabled ? current.config.theme.dark.accent : current.config.accent,
+        theme: current.config.theme,
+        footer: current.config.footer,
+        clearLogo: current.clearLogo,
+        clearFavicon: current.clearFavicon,
+        clearSplash: current.clearSplash,
       });
-      if (pendingLogo) data = await api.upload("/api/admin/branding/logo", pendingLogo);
-      if (pendingFavicon) data = await api.upload("/api/admin/branding/favicon", pendingFavicon);
-      if (pendingSplash) data = await api.upload("/api/admin/branding/splash", pendingSplash);
+      if (current.pendingLogo) data = await api.upload("/api/admin/branding/logo", current.pendingLogo);
+      if (current.pendingFavicon) data = await api.upload("/api/admin/branding/favicon", current.pendingFavicon);
+      if (current.pendingSplash) data = await api.upload("/api/admin/branding/splash", current.pendingSplash);
       const next = { ...DEFAULT_BRANDING, ...data.config, theme: normalizeTheme(data.config?.theme) };
       setConfig(next);
       const pub = data.public as PublicBranding;
@@ -182,14 +193,8 @@ export function BrandingPanel({ onChange }: { onChange?: (branding: PublicBrandi
       setClearFavicon(false);
       setClearSplash(false);
       onChange?.(pub);
-      setStatus(tr("saved"));
-      setTimeout(() => setStatus(""), 1200);
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : tr("couldNotSave"));
-    } finally {
-      setSaving(false);
-    }
-  }
+    },
+  );
 
   const accentValue = config.accent && /^#[0-9a-f]{6}$/i.test(config.accent) ? config.accent : "#FE4901";
 
@@ -281,7 +286,7 @@ export function BrandingPanel({ onChange }: { onChange?: (branding: PublicBrandi
           setClearSplash(true);
         }}
       />
-      <SettingsSaveBar saving={saving} status={status} onSave={() => void save()} />
+      <SettingsSaveBar saving={saving} status={status} />
     </div>
   );
 }

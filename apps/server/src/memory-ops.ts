@@ -217,11 +217,24 @@ function englishGender(value: string) {
   return clean(value);
 }
 
-function englishName(value: string) {
+const NAME_STOP = new Set(
+  "is the user users dog cat pet called named has have their his her a an my and of was born glad happy here going fine good ok okay not very old".split(
+    " ",
+  ),
+);
+
+function personName(value: string) {
   const name = clean(value).replace(/[.,]$/, "");
-  if (!/^[\p{L}][\p{L}' -]{0,40}$/u.test(name)) return "";
-  if (/^(glad|happy|here|going|born|fine|good|ok|okay|not|the|a|an|very|old)$/i.test(name)) return "";
-  return name.charAt(0).toUpperCase() + name.slice(1);
+  const parts = name.split(/\s+/).filter(Boolean);
+  if (!parts.length || parts.length > 3) return "";
+  if (parts.some((part) => NAME_STOP.has(part.toLowerCase().replace(/'/g, "")) || !/^[\p{L}][\p{L}'-]{0,40}$/u.test(part))) {
+    return "";
+  }
+  return parts.map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+}
+
+function englishName(value: string) {
+  return personName(value);
 }
 
 function storeIdentityValue(label: string, value: string) {
@@ -461,9 +474,108 @@ const OWN_VERBS: Record<string, string> = {
   gebruik: "uses",
 };
 
+function titleCaseName(raw: string) {
+  return clean(raw)
+    .split(/\s+/)
+    .map((part) => (part ? part.charAt(0).toUpperCase() + part.slice(1) : ""))
+    .join(" ");
+}
+
+function petKind(word: string) {
+  const value = word.toLowerCase();
+  if (value === "hond") return "dog";
+  if (value === "kat") return "cat";
+  if (value === "huisdier") return "pet";
+  return value;
+}
+
+function petFact(text: string) {
+  const t = normalizeSpeaker(text);
+  const loved = t.match(
+    /^(?:i|ik)\s+(?:really\s+)?(?:love|like|adore|houd van)\s+(?:my|mijn)\s+(dog|cat|pet|hond|kat|huisdier)(?:\s+(?:called|named|genaamd|heet)\s+([\p{L}][\p{L}'-]{1,40}))?$/iu,
+  );
+  if (loved) {
+    const kind = petKind(loved[1]);
+    return loved[2] ? `The user loves their ${kind}, ${titleCaseName(loved[2])}.` : `The user loves their ${kind}.`;
+  }
+  const owned = t.match(
+    /^(?:i|ik)\s+(?:have|own|heb)\s+(?:a|an|een|my|mijn)\s+(dog|cat|pet|hond|kat|huisdier)(?:\s+(?:called|named|genaamd|heet)\s+([\p{L}][\p{L}'-]{1,40}))?$/iu,
+  );
+  if (owned) {
+    const kind = petKind(owned[1]);
+    return owned[2] ? `The user's ${kind} is called ${titleCaseName(owned[2])}.` : `The user has a ${kind}.`;
+  }
+  const named = t.match(
+    /^(?:my|mijn)\s+(dog|cat|pet|hond|kat|huisdier)\s+(?:is\s+)?(?:called|named|genaamd|heet)\s+([\p{L}][\p{L}'-]{1,40})$/iu,
+  );
+  if (!named) return "";
+  return `The user's ${petKind(named[1])} is called ${titleCaseName(named[2])}.`;
+}
+
+function petSentence(text: string) {
+  const direct = petFact(text) || polishStoredPet(text);
+  if (direct) return direct;
+  const t = clean(text);
+  const inverted = t.match(/\b([\p{L}][\p{L}'-]{1,40})\s+is\s+(?:the\s+)?user'?s\s+(dog|cat|pet)\b/iu);
+  if (inverted && personName(inverted[1])) {
+    return `The user's ${inverted[2].toLowerCase()} is called ${titleCaseName(inverted[1])}.`;
+  }
+  const called = t.match(
+    /\b(dog|cat|pet|hond|kat|huisdier)(?:'s)?\s+(?:is\s+)?(?:called|named|genaamd|heet)\s+([\p{L}][\p{L}'-]{1,40})\b/iu,
+  );
+  if (called && personName(called[2])) {
+    return `The user's ${petKind(called[1])} is called ${titleCaseName(called[2])}.`;
+  }
+  return "";
+}
+
+export function presentMemoryContent(text: string) {
+  const value = stripFalseBirthdayLabel(clean(text));
+  if (!value) return "";
+  const pet = petSentence(value);
+  const labeledName = value.match(/(?:^|[,;]|\n)\s*name\s*:\s*([^,\n;]+)/i);
+  const nameOk = !labeledName || Boolean(personName(labeledName[1]));
+  if (nameOk && !pet) return value;
+  const fields = parseIdentityFields(value);
+  if (Object.keys(fields).length) {
+    const formatted = formatIdentityMemory(fields);
+    if (pet && !/\b(dog|cat|pet)\b/i.test(formatted)) return `${formatted}. ${pet}`;
+    return formatted || pet || value;
+  }
+  return pet || value;
+}
+
+function polishStoredPet(text: string) {
+  const t = clean(text).replace(/\.$/, "");
+  const loved = t.match(
+    /^the user loves (?:their|his|her) (dog|cat|pet)(?:,)?(?:\s+(?:called|named))?\s+([\p{L}][\p{L}'-]{1,40})$/iu,
+  );
+  if (loved) return `The user loves their ${loved[1].toLowerCase()}, ${titleCaseName(loved[2])}.`;
+  return "";
+}
+
+function unwrapMemoryRequest(text: string) {
+  const value = clean(text);
+  const match = value.match(
+    /^(?:please\s+)?(?:can you |could you |would you )?(?:please\s+)?(?:add(?:\s+this)?\s+to\s+memory|remember|save(?:\s+this)?(?:\s+in(?:to)?\s+memory)?|store(?:\s+this)?(?:\s+in\s+memory)?|onthoud(?:\s+dit)?|note|sla op)(?:\s+that|\s+dat)?\s+(.+)$/i,
+  );
+  const inner = clean(match?.[1] || "");
+  if (!inner || isPlaceholder(inner) || isSaveOnlyCommand(inner)) return value;
+  return inner;
+}
+
+export function rejectedMemoryClaim(content: string, userText: string) {
+  const claim = clean(content).toLowerCase();
+  const user = clean(userText).toLowerCase();
+  if (/\bhobb(?:y|ies)\b|\binterests?\b/.test(claim) && !/\bhobb(?:y|ies)\b|\binterests?\b/.test(user)) return true;
+  return false;
+}
+
 function personalSummary(text: string) {
   const t = normalizeSpeaker(text);
   if (!t || isQuestion(t) || isTaskRequest(t)) return "";
+  const pet = petFact(t);
+  if (pet) return pet;
   const mine = t.match(/^(?:my|mijn)\s+([\p{L}][\p{L}\s'-]{0,40}?)\s+(are|is|zijn)\s+(.{2,200})$/iu);
   if (mine && !/^(name|naam|age|leeftijd|birthday|job|profession|day|message|this|that)$/i.test(mine[1].trim())) {
     const subject = mine[1].trim();
@@ -491,6 +603,7 @@ function personalSummary(text: string) {
 
 function isInterestStatement(text: string) {
   const t = normalizeSpeaker(text);
+  if (petFact(t)) return false;
   if (/^(?:i|ik)\s+(?:really\s+|mostly\s+|usually\s+|often\s+|always\s+)?(?:like|love|enjoy|prefer|am into)\b/i.test(t)) {
     return true;
   }
@@ -632,6 +745,7 @@ export function distinctiveTokens(text: string) {
 export function memoryFactKey(text: string) {
   const t = clean(text).toLowerCase();
   if (Object.keys(parseIdentityFields(t)).length) return "identity";
+  if (/\b(dog|cat|pet|hond|kat|huisdier)\b/.test(t) && /\b(called|named|genaamd|loves their)\b/.test(t)) return "pet";
   if (/\b(name is|heet|age is|jaar oud|leeftijd|birthday|geboren|geboortedatum|geslacht|gender)\b/.test(t)) {
     return "identity";
   }
@@ -729,9 +843,16 @@ export function summarizeMemoryFact(text: string) {
     .replace(/\s+en ik ben er erg blij mee\.?$/i, "")
     .replace(/\s+and i(?:['’]m| am) (?:very )?(?:happy|glad)(?: with it)?\.?$/i, "");
   const identity = parseIdentityFields(t);
-  if (Object.keys(identity).length) return formatIdentityMemory(identity);
+  if (Object.keys(identity).length) {
+    const formatted = formatIdentityMemory(identity);
+    const pet = petSentence(t);
+    if (pet && !/\b(dog|cat|pet)\b/i.test(formatted)) return `${formatted}. ${pet}`;
+    return formatted;
+  }
   const personal = personalSummary(t);
   if (personal) return personal;
+  const polished = polishStoredPet(t);
+  if (polished) return polished;
   t = t
     .replace(/\bde gebruiker heeft\b/gi, "the user has")
     .replace(/\bde gebruiker is\b/gi, "the user is")
@@ -781,7 +902,7 @@ export function categorizeMemory(text: string) {
 }
 
 export function fallbackMemoryDrafts(message: string, previousUser?: string): MemoryDraft[] {
-  const current = clean(message);
+  const current = unwrapMemoryRequest(clean(message));
   const source = isSaveOnlyCommand(current) || isPlaceholder(current) ? clean(previousUser || "") : current;
   if (!source || isSaveOnlyCommand(source) || isPlaceholder(source) || isChatFiller(source)) return [];
   const fromFields = profileFieldDrafts(source);

@@ -9,6 +9,7 @@ import {
 } from "@wlfv/shared";
 import { api } from "@/lib/api";
 import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar";
+import { useAutoSave } from "@/components/settings/useAutoSave";
 import { Switch } from "@/components/ui/switch";
 import { useT } from "@/lib/language";
 
@@ -185,29 +186,16 @@ function EndpointFields({
 export function ImagesPanel() {
   const tr = useT();
   const [config, setConfig] = useState<ImagesConfig>(DEFAULT_IMAGES);
-  const [status, setStatus] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [ready, setReady] = useState(false);
+  const { saving, status } = useAutoSave(config, ready, (next) => api.send("/api/admin/images", "PATCH", next));
 
   useEffect(() => {
     api
       .get("/api/admin/images")
       .then((data) => setConfig(data.config as ImagesConfig))
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => setReady(true));
   }, []);
-
-  async function save() {
-    setSaving(true);
-    try {
-      const saved = await api.send("/api/admin/images", "PATCH", config);
-      setConfig(saved.config);
-      setStatus(tr("saved"));
-      setTimeout(() => setStatus(""), 1200);
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : tr("couldNotSave"));
-    } finally {
-      setSaving(false);
-    }
-  }
 
   return (
     <div className="max-w-xl pr-8">
@@ -241,7 +229,7 @@ export function ImagesPanel() {
           })
         }
       />
-      <SettingsSaveBar saving={saving} status={status} onSave={() => void save()} />
+      <SettingsSaveBar saving={saving} status={status} />
     </div>
   );
 }

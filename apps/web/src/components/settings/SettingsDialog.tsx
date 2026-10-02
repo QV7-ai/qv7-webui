@@ -78,6 +78,7 @@ export function SettingsDialog({
   const [showUsage, setShowUsage] = useState(true);
   const [loadToolsWhenNeeded, setLoadToolsWhenNeeded] = useState(false);
   const [animations, setAnimations] = useState(true);
+  const [settingsReady, setSettingsReady] = useState(false);
   const [systemPrompt, setSystemPrompt] = useState("");
   const [generation, setGeneration] = useState<GenerationSettings>({ ...EMPTY_GENERATION, values: {}, custom: [] });
   const [accountId, setAccountId] = useState("");
@@ -155,6 +156,7 @@ export function SettingsDialog({
     );
     setMobileSection(null);
     setQuery("");
+    setSettingsReady(false);
     api.get("/api/settings").then((d) => {
       setTheme(d.theme);
       setLanguage(d.language === "nl" ? "nl" : "en");
@@ -174,6 +176,7 @@ export function SettingsDialog({
         onFeaturesChange?.(d.features);
       }
       applyTheme(d.theme || "dark");
+      setSettingsReady(true);
     }).catch(() => undefined);
     api.get("/api/account").then((d) => setAccountId(d.user.id)).catch(() => undefined);
   }, [open, initialTab, isAdmin]);
@@ -241,6 +244,7 @@ export function SettingsDialog({
           onAnimations={setAnimations}
           onSystemPrompt={setSystemPrompt}
           onGeneration={setGeneration}
+          ready={settingsReady}
         />
       ) : null}
       {tab === "usage" ? <UsagePanel language={language} /> : null}

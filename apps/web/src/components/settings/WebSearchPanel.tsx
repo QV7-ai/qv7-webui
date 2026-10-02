@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { DEFAULT_WEB_SEARCH, type WebSearchConfig } from "@wlfv/shared";
 import { api } from "@/lib/api";
 import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar";
+import { useAutoSave } from "@/components/settings/useAutoSave";
 import { Switch } from "@/components/ui/switch";
 import { useT } from "@/lib/language";
 
@@ -51,35 +52,26 @@ export function WebSearchPanel() {
   const tr = useT();
   const [config, setConfig] = useState<WebSearchConfig>(DEFAULT_WEB_SEARCH);
   const [limit, setLimit] = useState("");
-  const [status, setStatus] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [ready, setReady] = useState(false);
+  const { saving, status } = useAutoSave({ config, limit }, ready, ({ config: next, limit: raw }) => {
+    const payload: WebSearchConfig = {
+      ...next,
+      fetchContentLengthLimit: raw.trim() === "" ? null : Number(raw),
+    };
+    return api.send("/api/admin/web-search", "PATCH", payload);
+  });
 
   useEffect(() => {
-    api.get("/api/admin/web-search").then((data) => {
-      const next = data.config as WebSearchConfig;
-      setConfig(next);
-      setLimit(next.fetchContentLengthLimit == null ? "" : String(next.fetchContentLengthLimit));
-    }).catch(() => undefined);
+    api
+      .get("/api/admin/web-search")
+      .then((data) => {
+        const next = data.config as WebSearchConfig;
+        setConfig(next);
+        setLimit(next.fetchContentLengthLimit == null ? "" : String(next.fetchContentLengthLimit));
+      })
+      .catch(() => undefined)
+      .finally(() => setReady(true));
   }, []);
-
-  async function save() {
-    const payload: WebSearchConfig = {
-      ...config,
-      fetchContentLengthLimit: limit.trim() === "" ? null : Number(limit),
-    };
-    setSaving(true);
-    try {
-      const saved = await api.send("/api/admin/web-search", "PATCH", payload);
-      setConfig(saved.config);
-      setLimit(saved.config.fetchContentLengthLimit == null ? "" : String(saved.config.fetchContentLengthLimit));
-      setStatus(tr("saved"));
-      setTimeout(() => setStatus(""), 1200);
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : tr("couldNotSave"));
-    } finally {
-      setSaving(false);
-    }
-  }
 
   return (
     <div className="max-w-xl pr-8">
@@ -247,7 +239,7 @@ export function WebSearchPanel() {
           onChange={(event) => setConfig({ ...config, youtubeProxyUrl: event.target.value })}
         />
       </Field>
-      <SettingsSaveBar saving={saving} status={status} onSave={() => void save()} />
+      <SettingsSaveBar saving={saving} status={status} />
     </div>
   );
 }

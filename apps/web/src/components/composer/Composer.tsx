@@ -511,7 +511,7 @@ export function Composer({
       label: tr("document"),
       icon: <FileText size={15} className="text-[var(--muted)]" />,
       checked: documentOn,
-      experimental: true,
+      beta: true,
       onClick: () => onDocument?.(!documentOn),
     },
     ...(toolPermissionsEnabled
@@ -640,7 +640,7 @@ export function Composer({
             ) : null}
             {documentOn ? (
               <button type="button" className="rounded-md bg-[var(--accent-soft)] px-1.5 py-0.5 text-[11px] text-[var(--accent)]" onClick={() => onDocument?.(false)}>
-                {tr("document")} · {tr("experimental")}
+                {tr("document")} · {tr("beta")}
               </button>
             ) : null}
             {toolPermission === "full" ? (
@@ -700,7 +700,7 @@ export function Composer({
                     <span className="flex min-w-0 flex-1 items-center gap-2">
                       <span className="truncate">{item.label}</span>
                       {item.id === "canvas" || item.id === "web" || item.id === "document" ? (
-                        <span className="shrink-0 rounded-full bg-[var(--surface)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">{item.id === "document" ? tr("experimental") : tr("beta")}</span>
+                        <span className="inline-flex h-4 shrink-0 items-center rounded-full bg-[var(--surface)] px-2.5 text-[10px] font-medium uppercase leading-none tracking-wide text-[var(--muted)]">{tr("beta")}</span>
                       ) : null}
                     </span>
                     <span className="text-[11px] text-[var(--muted)]">{item.kind === "skill" ? tr("skills") : tr("tools")}</span>
@@ -713,7 +713,14 @@ export function Composer({
             document.body,
           )
         : null}
-      <input ref={fileRef} type="file" multiple className="hidden" onChange={(e) => void uploadFiles(e.target.files)} />
+      <input
+        ref={fileRef}
+        type="file"
+        multiple
+        accept="image/*,.md,.markdown,.txt,.csv,.json,.xml,.html,.css,.js,.ts,.tsx,.jsx,.py,.docx,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        className="hidden"
+        onChange={(e) => void uploadFiles(e.target.files)}
+      />
       {pageOpen ? (
         <div className="motion-fade fixed inset-0 z-[60] flex items-center justify-center p-4">
           <button type="button" className="absolute inset-0 bg-black/60" aria-label={tr("cancelAttach")} onClick={() => setPageOpen(false)} />
@@ -904,7 +911,7 @@ export function Composer({
                               <span className="min-w-0">
                                 <span className="flex items-center gap-2">
                                   <span className="truncate">{row.label}</span>
-                                  {row.beta || row.experimental ? <span className="shrink-0 rounded-full bg-[var(--elevated)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">{row.experimental ? tr("experimental") : tr("beta")}</span> : null}
+                                  {row.beta || row.experimental ? <span className="inline-flex h-4 shrink-0 items-center rounded-full bg-[var(--elevated)] px-2.5 text-[10px] font-medium uppercase leading-none tracking-wide text-[var(--muted)]">{row.experimental ? tr("experimental") : tr("beta")}</span> : null}
                                 </span>
                               </span>
                             </span>
@@ -1119,7 +1126,7 @@ export function Composer({
                                 <span className="min-w-0">
                                   <span className="flex items-center gap-2">
                                     <span className="truncate">{row.label}</span>
-                                    {row.beta || row.experimental ? <span className="shrink-0 rounded-full bg-[var(--surface)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">{row.experimental ? tr("experimental") : tr("beta")}</span> : null}
+                                    {row.beta || row.experimental ? <span className="inline-flex h-4 shrink-0 items-center rounded-full bg-[var(--surface)] px-2.5 text-[10px] font-medium uppercase leading-none tracking-wide text-[var(--muted)]">{row.experimental ? tr("experimental") : tr("beta")}</span> : null}
                                   </span>
                                 </span>
                               </span>

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { memories } from "./db/schema.ts";
 import type { DB } from "./db/index.ts";
-import { canonicalIdentityField, englishMemoryPath, formatIdentityMemory, inferMemoryPath, memoriesOverlap, memoryFactKey, normalizeMemoryPath, normalizeMemoryType, parseIdentityFields, pickMemorySummary, stripFalseBirthdayLabel, summarizeMemoryFact, type MemoryDraft } from "./memory-ops.ts";
+import { canonicalIdentityField, englishMemoryPath, inferMemoryPath, memoriesOverlap, memoryFactKey, normalizeMemoryPath, normalizeMemoryType, parseIdentityFields, pickMemorySummary, presentMemoryContent, stripFalseBirthdayLabel, summarizeMemoryFact, type MemoryDraft } from "./memory-ops.ts";
 import { rankMemories } from "./memory-context.ts";
 
 export type { MemoryDraft };
@@ -313,14 +313,13 @@ export function repairFalseBirthdayMemories(db: DB, userId: string) {
   const rows = db.select().from(memories).where(eq(memories.userId, userId)).all();
   const now = Date.now();
   for (const row of rows) {
-    let content = stripFalseBirthdayLabel(row.content);
+    let content = presentMemoryContent(row.content);
     const identity = parseIdentityFields(content);
-    if (Object.keys(identity).length) content = formatIdentityMemory(identity);
     let path = englishMemoryPath(row.path);
     if (/^(birthday|geboortedatum)$/i.test(path) && !/^Birthday:/i.test(content)) {
       path = inferMemoryPath(content, row.category) || "";
     }
-    if (Object.keys(identity).length) path = "Identity";
+    if (Object.keys(identity).length && memoryFactKey(content) !== "pet") path = "Identity";
     if (content === row.content && path === row.path) continue;
     db.update(memories).set({ content, path, updatedAt: now }).where(eq(memories.id, row.id)).run();
     row.content = content;

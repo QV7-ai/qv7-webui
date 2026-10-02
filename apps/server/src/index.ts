@@ -30,6 +30,7 @@ import { firstOllamaClient } from "./runtime.ts";
 import { registerUploads, resolveUploadsDir } from "./uploads.ts";
 import { registerAttachments } from "./attachments.ts";
 import { registerImages } from "./images/index.ts";
+import { registerCanvases } from "./canvases.ts";
 
 async function main() {
   const env = loadEnv();
@@ -50,7 +51,11 @@ async function main() {
     origin: env.webOrigin,
     credentials: true,
   });
-  await app.register(rateLimit, { max: 120, timeWindow: "1 minute" });
+  await app.register(rateLimit, {
+    max: 600,
+    timeWindow: "1 minute",
+    allowList: (req) => req.method === "GET" || req.method === "HEAD",
+  });
   await app.register(multipart, {
     limits: { fileSize: 25 * 1024 * 1024, files: 8 },
   });
@@ -83,14 +88,22 @@ async function main() {
   registerInterface(app, db);
   registerAdminDatabase(app, db, env);
   registerConnections(app, db, env);
+  registerCanvases(app, db);
 
-  const webDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web/dist");
-  if (env.nodeEnv === "production" && fs.existsSync(path.join(webDist, "index.html"))) {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const webDist = [path.resolve(here, "../../web/dist"), path.resolve(process.cwd(), "../web/dist"), path.resolve(process.cwd(), "apps/web/dist")].find(
+    (dir) => fs.existsSync(path.join(dir, "index.html")),
+  );
+  if (webDist) {
     await app.register(fastifyStatic, { root: webDist, wildcard: false });
     app.setNotFoundHandler((req, reply) => {
-      if (req.url.startsWith("/api")) return reply.code(404).send({ error: "Not found." });
+      const pathname = req.url.split("?")[0] || "/";
+      if (pathname.startsWith("/api")) return reply.code(404).send({ error: "Not found." });
+      if (req.method !== "GET" && req.method !== "HEAD") return reply.code(404).send({ error: "Not found." });
       return reply.sendFile("index.html");
     });
+  } else {
+    app.log.warn("Web build not found. GET /chat will 404 until npm run build creates apps/web/dist.");
   }
 
   await app.listen({ host: env.host, port: env.port });

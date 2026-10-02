@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fallbackMemoryDrafts, isCasualChat, memoriesOverlap, memoryLineForPrompt, parseMemoryOperations, pickMemorySummary, selectMemoriesForPrompt, splitDeviceFacts } from "./memory-ops.ts";
+import { fallbackMemoryDrafts, isCasualChat, memoriesOverlap, memoryLineForPrompt, parseMemoryOperations, pickMemorySummary, presentMemoryContent, rejectedMemoryClaim, selectMemoriesForPrompt, splitDeviceFacts } from "./memory-ops.ts";
 
 test("parses Open WebUI-style memory operations from a noisy completion", () => {
   const ops = parseMemoryOperations(`Sure.
@@ -158,6 +158,26 @@ test("saves one interest memory from a hobbies statement", () => {
   assert.match(drafts[0].content, /gaming/i);
   assert.match(drafts[0].content, /program/i);
   assert.match(drafts[0].content, /design/i);
+});
+
+test("keeps a dog out of the name field", () => {
+  assert.equal(
+    presentMemoryContent("Name: Diesel is the user's dog, Age: 22, Birthday: May 7, 2004"),
+    "Age: 22, Birthday: May 7, 2004. The user's dog is called Diesel.",
+  );
+  const drafts = fallbackMemoryDrafts("i have a dog called diesel");
+  assert.equal(drafts.length, 1);
+  assert.equal(drafts[0].content, "The user's dog is called Diesel.");
+  assert.notEqual(drafts[0].path, "Identity");
+});
+
+test("saves a named dog as one fact, not a hobby", () => {
+  const drafts = fallbackMemoryDrafts("add to memory that i love my dog called diesel");
+  assert.equal(drafts.length, 1);
+  assert.equal(drafts[0].content, "The user loves their dog, Diesel.");
+  assert.notEqual(drafts[0].path, "Interests");
+  assert.equal(rejectedMemoryClaim("The user's hobbies include dog and Diesel.", "add to memory that i love my dog called diesel"), true);
+  assert.equal(rejectedMemoryClaim("The user's hobbies include design and programming.", "My hobbies are design and programming."), false);
 });
 
 test("saves one memory for a like statement", () => {

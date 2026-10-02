@@ -125,6 +125,42 @@ export type WebSearchSource = {
   snippet: string;
 };
 
+export type UsedMemory = { id: string; content: string };
+
+export function parseUsedMemories(raw: unknown): UsedMemory[] {
+  let value = raw;
+  if (typeof raw === "string") {
+    const text = raw.trim();
+    if (!text) return [];
+    try {
+      value = JSON.parse(text);
+    } catch {
+      return [];
+    }
+  }
+  const list = Array.isArray(value)
+    ? value
+    : value && typeof value === "object" && Array.isArray((value as { memories?: unknown }).memories)
+      ? (value as { memories: unknown[] }).memories
+      : [];
+  const used: UsedMemory[] = [];
+  const seen = new Set<string>();
+  for (const item of list) {
+    if (!item || typeof item !== "object") continue;
+    const id = String((item as { id?: unknown }).id || "").trim();
+    const content = String((item as { content?: unknown }).content || "")
+      .replace(/<\/?memory_context>/gi, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 400);
+    if (!id || !content || id.length > 80 || seen.has(id)) continue;
+    seen.add(id);
+    used.push({ id, content });
+    if (used.length >= 24) break;
+  }
+  return used;
+}
+
 export type ChatActivity =
   | { kind: "search"; query: string; sources: WebSearchSource[] }
   | { kind: "note"; text: string }

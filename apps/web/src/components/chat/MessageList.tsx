@@ -1,9 +1,10 @@
 import { Copy, FileText, PanelsTopLeft, Pencil, RefreshCw, ThumbsDown, ThumbsUp } from "lucide-react";
-import type { ChatActivity, UsageStats, WebSearchSource } from "@wlfv/shared";
+import type { ChatActivity, UsageStats, UsedMemory, WebSearchSource } from "@wlfv/shared";
 import { parseCanvases, stripCanvas, stripToolMarkup, type CanvasDoc } from "@wlfv/shared";
 import { Markdown } from "./Markdown";
 import { ActivityTrace } from "./ActivityTrace";
 import { UsageLine } from "./UsageLine";
+import { MemoryUsed } from "./MemoryUsed";
 import { ModelWait, type WaitStage } from "./ModelWait";
 import { ModelIcon } from "@/components/models/ModelIcon";
 import { useLang, useT } from "@/lib/language";
@@ -18,6 +19,7 @@ export type UiMessage = {
   usage?: UsageStats;
   sources?: WebSearchSource[];
   activities?: ChatActivity[];
+  memoriesUsed?: UsedMemory[];
   images?: { url: string; name: string }[];
   canvas?: boolean;
   rating?: number;
@@ -69,6 +71,15 @@ export function splitUserContent(content: string) {
   return { text, images };
 }
 
+export function listCanvasVersions(messages: UiMessage[]) {
+  const versions: { messageId: string; doc: CanvasDoc }[] = [];
+  for (const message of messages) {
+    if (message.role !== "assistant" || message.canvas === false) continue;
+    for (const doc of parseCanvases(message.content)) versions.push({ messageId: message.id, doc });
+  }
+  return versions;
+}
+
 export function MessageList({
   messages,
   assistantName,
@@ -85,11 +96,12 @@ export function MessageList({
   showUsage?: boolean;
   onCopy: (text: string) => void;
   onRegenerate: () => void;
-  onOpenCanvas?: (doc: CanvasDoc) => void;
+  onOpenCanvas?: (doc: CanvasDoc, index: number) => void;
   onRate?: (id: string, rating: number) => void;
 }) {
   const tr = useT();
   const { lang } = useLang();
+  const versions = listCanvasVersions(messages);
   return (
     <div className="min-w-0 space-y-8 py-6 sm:py-8">
       {messages
@@ -137,20 +149,24 @@ export function MessageList({
                 return (
                   <>
                     {waiting ? <ModelWait stage={m.wait || "loading"} /> : null}
-                    {canvases.map((doc) => (
-                      <button
-                        key={doc.title + doc.html.length}
-                        type="button"
-                        className="mb-3 flex w-full max-w-md items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-3 py-3 text-left hover:bg-[var(--hover)]"
-                        onClick={() => onOpenCanvas?.(doc)}
-                      >
-                        <PanelsTopLeft size={18} className="shrink-0 text-[var(--accent)]" />
-                        <span className="min-w-0">
-                          <span className="block text-[12px] text-[var(--muted)]">{tr("canvas")}</span>
-                          <span className="block truncate text-[14px] font-medium">{doc.title}</span>
-                        </span>
-                      </button>
-                    ))}
+                    {canvases.map((doc, docIndex) => {
+                      const start = versions.findIndex((item) => item.messageId === m.id);
+                      const versionIndex = start + docIndex;
+                      return (
+                        <button
+                          key={`${m.id}-${docIndex}`}
+                          type="button"
+                          className="mb-3 flex w-full max-w-md items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-3 py-3 text-left hover:bg-[var(--hover)]"
+                          onClick={() => onOpenCanvas?.(doc, versionIndex)}
+                        >
+                          <PanelsTopLeft size={18} className="shrink-0 text-[var(--accent)]" />
+                          <span className="min-w-0">
+                            <span className="block text-[12px] text-[var(--muted)]">{tr("canvas")}</span>
+                            <span className="block truncate text-[14px] font-medium">{doc.title}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
                     {files.docs.map((doc) => (
                       <a
                         key={doc.url}
@@ -172,6 +188,7 @@ export function MessageList({
                   </>
                 );
               })()}
+              {!m.streaming && m.memoriesUsed?.length ? <MemoryUsed memories={m.memoriesUsed} label={tr("memoryUsed")} /> : null}
               {showUsage && !m.streaming && m.usage ? <UsageLine usage={m.usage} /> : null}
               {!m.streaming && m.content ? (
                 <div className="mt-2 flex gap-1 text-[var(--muted)]">

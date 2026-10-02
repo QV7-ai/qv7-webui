@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { DEFAULT_INTERFACE, TASK_MODEL_CURRENT, type InterfaceConfig } from "@wlfv/shared";
 import { api } from "@/lib/api";
 import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar";
+import { useAutoSave } from "@/components/settings/useAutoSave";
 import { Switch } from "@/components/ui/switch";
 import { useT } from "@/lib/language";
 
@@ -61,34 +62,23 @@ export function InterfacePanel({ onChange }: { onChange?: (config: InterfaceConf
   const tr = useT();
   const [config, setConfig] = useState<InterfaceConfig>(DEFAULT_INTERFACE);
   const [models, setModels] = useState<ListedModel[]>([]);
-  const [status, setStatus] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [ready, setReady] = useState(false);
+  const { saving, status } = useAutoSave(config, ready, async (next) => {
+    const saved = await api.send("/api/admin/interface", "PATCH", next);
+    onChange?.(saved.config as InterfaceConfig);
+  });
 
   useEffect(() => {
     api
       .get("/api/admin/interface")
       .then((data) => setConfig(data.config as InterfaceConfig))
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => setReady(true));
     api
       .get("/api/admin/models")
       .then((data) => setModels((data.models ?? []) as ListedModel[]))
       .catch(() => undefined);
   }, []);
-
-  async function save() {
-    setSaving(true);
-    try {
-      const saved = await api.send("/api/admin/interface", "PATCH", config);
-      setConfig(saved.config);
-      onChange?.(saved.config);
-      setStatus(tr("saved"));
-      setTimeout(() => setStatus(""), 1200);
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : tr("couldNotSave"));
-    } finally {
-      setSaving(false);
-    }
-  }
 
   const usable = models.filter((item) => item.enabled && !item.missing);
   const localModels = usable.filter((item) => item.providerKind !== "openai");
@@ -148,7 +138,7 @@ export function InterfacePanel({ onChange }: { onChange?: (config: InterfaceConf
           onChange={(titleGenerationEnabled) => setConfig({ ...config, titleGenerationEnabled })}
         />
       </div>
-      <SettingsSaveBar saving={saving} status={status} onSave={() => void save()} />
+      <SettingsSaveBar saving={saving} status={status} />
     </div>
   );
 }

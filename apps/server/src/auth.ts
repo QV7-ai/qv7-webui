@@ -166,7 +166,7 @@ export function registerAuth(app: FastifyInstance, db: DB, env: Env) {
     return { config };
   });
 
-  app.post("/api/auth/register", async (req, reply) => {
+  app.post("/api/auth/register", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req, reply) => {
     const config = loadAuthConfig(db);
     if (!config.signupsEnabled) return reply.code(403).send({ error: "New signups are disabled." });
     const body = req.body as { email?: string; password?: string; username?: string };
@@ -222,7 +222,7 @@ export function registerAuth(app: FastifyInstance, db: DB, env: Env) {
     return { user: publicAuthUser(created) };
   });
 
-  app.post("/api/auth/login", async (req, reply) => {
+  app.post("/api/auth/login", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req, reply) => {
     const body = req.body as { email?: string; password?: string };
     const email = body.email?.trim().toLowerCase();
     const password = body.password ?? "";

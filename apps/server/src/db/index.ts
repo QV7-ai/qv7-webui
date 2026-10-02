@@ -88,6 +88,8 @@ export function openDb(env: Env) {
       pinned INTEGER NOT NULL DEFAULT 0,
       unread INTEGER NOT NULL DEFAULT 0,
       temporary INTEGER NOT NULL DEFAULT 0,
+      context_summary TEXT NOT NULL DEFAULT '',
+      context_summary_until TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -207,6 +209,9 @@ export function openDb(env: Env) {
   if (!messageCols.some((col) => col.name === "activities")) {
     sqlite.exec("ALTER TABLE messages ADD COLUMN activities TEXT");
   }
+  if (!messageCols.some((col) => col.name === "memories_used")) {
+    sqlite.exec("ALTER TABLE messages ADD COLUMN memories_used TEXT");
+  }
   if (!messageCols.some((col) => col.name === "rating")) {
     sqlite.exec("ALTER TABLE messages ADD COLUMN rating INTEGER NOT NULL DEFAULT 0");
   }
@@ -285,6 +290,12 @@ export function openDb(env: Env) {
   if (!conversationCols.some((col) => col.name === "temporary")) {
     sqlite.exec("ALTER TABLE conversations ADD COLUMN temporary INTEGER NOT NULL DEFAULT 0");
   }
+  if (!conversationCols.some((col) => col.name === "context_summary")) {
+    sqlite.exec("ALTER TABLE conversations ADD COLUMN context_summary TEXT NOT NULL DEFAULT ''");
+  }
+  if (!conversationCols.some((col) => col.name === "context_summary_until")) {
+    sqlite.exec("ALTER TABLE conversations ADD COLUMN context_summary_until TEXT");
+  }
   const userCols = sqlite.prepare("PRAGMA table_info(users)").all() as { name: string }[];
   if (!userCols.some((col) => col.name === "display_name")) {
     sqlite.exec("ALTER TABLE users ADD COLUMN display_name TEXT NOT NULL DEFAULT ''");
@@ -311,6 +322,15 @@ export function openDb(env: Env) {
   if (!userCols.some((col) => col.name === "usage_reset_at")) {
     sqlite.exec("ALTER TABLE users ADD COLUMN usage_reset_at INTEGER NOT NULL DEFAULT 0");
   }
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS canvas_shares (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      html TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+  `);
   const seeded = sqlite.prepare("SELECT key FROM app_settings WHERE key = 'default_system_prompt_v1'").get();
   if (!seeded) {
     sqlite.prepare("INSERT INTO app_settings (key, value, updated_at) VALUES ('default_system_prompt_v1', '1', ?)").run(Date.now());

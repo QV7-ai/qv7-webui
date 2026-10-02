@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Brain, ChevronDown, Globe, X } from "lucide-react";
 import type { ChatActivity, WebSearchSource } from "@wlfv/shared";
 import { useT } from "@/lib/language";
@@ -76,7 +77,8 @@ export function ActivityTrace({
   const tr = useT();
   const steps = stepsFrom(activities, sources);
   const searches = steps.filter((step) => step.kind === "search");
-  const hasThinking = Boolean(thinking || (streaming && wait !== "searching" && wait !== "fetch"));
+  const quiet = wait === "searching" || wait === "fetch" || wait === "compacting";
+  const hasThinking = Boolean(thinking || (streaming && !quiet));
   const [open, setOpen] = useState(Boolean(streaming));
   const [sheet, setSheet] = useState(false);
   const [openSearch, setOpenSearch] = useState<Record<number, boolean>>({});
@@ -165,7 +167,13 @@ export function ActivityTrace({
             <ChevronDown size={12} className={thinkingOpen ? "rotate-180" : ""} />
           </button>
           {thinkingOpen && thinking ? (
-            <div className="max-h-64 overflow-y-auto whitespace-pre-wrap pb-1 text-[13px] leading-5 text-[var(--muted)]">{thinking}</div>
+            <div
+              className={`whitespace-pre-wrap break-words pb-1 text-[13px] leading-5 text-[var(--muted)] ${
+                compact ? "" : "max-h-64 overflow-y-auto overscroll-contain"
+              }`}
+            >
+              {thinking}
+            </div>
           ) : thinkingOpen && streaming ? (
             <p className="pb-1 text-[13px] text-[var(--muted)]">{tr("thinkingDots")}</p>
           ) : null}
@@ -197,33 +205,36 @@ export function ActivityTrace({
           </div>
         ) : null
       ) : null}
-      {sheet ? (
-        <div className="motion-fade fixed inset-0 z-[70] flex items-end justify-center bg-black/55 p-3 sm:items-center">
-          <button type="button" className="absolute inset-0" aria-label={tr("close")} onClick={() => setSheet(false)} />
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="activity-summary-title"
-            className="relative z-10 flex max-h-[85vh] w-full max-w-md flex-col rounded-3xl border border-[var(--border)] bg-[var(--elevated)] shadow-2xl"
-          >
-            <div className="flex items-center gap-3 px-4 pb-2 pt-4">
-              <button
-                type="button"
-                className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--hover)] text-[var(--text)]"
-                onClick={() => setSheet(false)}
-                aria-label={tr("close")}
+      {sheet
+        ? createPortal(
+            <div className="motion-fade fixed inset-0 z-[70] flex items-end justify-center bg-black/55 p-3 sm:items-center">
+              <button type="button" className="absolute inset-0" aria-label={tr("close")} onClick={() => setSheet(false)} />
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="activity-summary-title"
+                className="relative z-10 flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--elevated)] shadow-2xl"
               >
-                <X size={18} />
-              </button>
-              <h2 id="activity-summary-title" className="flex-1 text-center text-[16px] font-semibold">
-                {tr("activitySummary")}
-              </h2>
-              <span className="h-10 w-10" />
-            </div>
-            <div className="overflow-y-auto px-4 pb-6">{detail(true)}</div>
-          </div>
-        </div>
-      ) : null}
+                <div className="flex shrink-0 items-center gap-3 px-4 pb-2 pt-4">
+                  <button
+                    type="button"
+                    className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--hover)] text-[var(--text)]"
+                    onClick={() => setSheet(false)}
+                    aria-label={tr("close")}
+                  >
+                    <X size={18} />
+                  </button>
+                  <h2 id="activity-summary-title" className="flex-1 text-center text-[16px] font-semibold">
+                    {tr("activitySummary")}
+                  </h2>
+                  <span className="h-10 w-10" />
+                </div>
+                <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain px-4 pb-6">{detail(true)}</div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

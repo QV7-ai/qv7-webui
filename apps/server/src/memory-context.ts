@@ -1,4 +1,5 @@
-import { distinctiveTokens, englishMemoryPath, normalizeMemoryPath, stripFalseBirthdayLabel } from "./memory-ops.ts";
+import { parseUsedMemories, type UsedMemory } from "@wlfv/shared";
+import { distinctiveTokens, englishMemoryPath, memoryFactKey, normalizeMemoryPath, presentMemoryContent } from "./memory-ops.ts";
 
 export const MEMORY_CONTEXT_OPEN = "<memory_context>";
 export const MEMORY_CONTEXT_CLOSE = "</memory_context>";
@@ -24,7 +25,7 @@ function pathParts(path?: string | null) {
 }
 
 export function memoryLabel(memory: Pick<MemoryRow, "content" | "path">) {
-  const content = stripFalseBirthdayLabel(memory.content || "");
+  const content = presentMemoryContent(memory.content || "");
   let path = englishMemoryPath(String(memory.path || "").trim());
   if (/^(birthday|geboortedatum)$/i.test(path) && !/^Birthday:/i.test(content)) path = "";
   return path ? `${path}: ${content}` : content;
@@ -105,25 +106,44 @@ export function searchMemoryRows(
     .slice(0, limit);
 }
 
+function foldToken(token: string) {
+  if (token === "dogs" || token === "honden") return "dog";
+  if (token === "cats" || token === "katten") return "cat";
+  if (token === "pets") return "pet";
+  return token;
+}
+
+function asksAboutPet(query: string) {
+  return /\b(dogs?|cats?|pets?|honden?|katten?|huisdier)\b/i.test(query);
+}
+
 function retrievalTokens(query: string) {
   const tokens = distinctiveTokens(query);
   if (/\b(pc|pcs|mini-?pc|spec|homelab|hardware|gpu|videokaart|ram|server)\b/i.test(query)) {
     tokens.push("hardware");
   }
-  if (/\b(wie ben ik|who am i|naam|name|leeftijd|age|birthday)\b/i.test(query)) {
+  if (!asksAboutPet(query) && /\b(wie ben ik|who am i|naam|name|leeftijd|age|birthday)\b/i.test(query)) {
     tokens.push("identiteit");
   }
-  return tokens;
+  if (/\bdogs?\b|\bhonden?\b/i.test(query)) tokens.push("dog");
+  if (/\bcats?\b|\bkatten?\b/i.test(query)) tokens.push("cat");
+  if (/\bpets?\b|\bhuisdier/i.test(query)) tokens.push("pet");
+  return tokens.map(foldToken);
 }
 
 export function rankMemories(memories: MemoryRow[], query: string, k = MEMORY_RETRIEVE_K) {
   const qTok = retrievalTokens(query);
   if (!qTok.length) return [];
   const qSet = new Set(qTok);
+  const petQuery = asksAboutPet(query);
   return memories
     .map((item) => {
-      const tokens = distinctiveTokens(`${item.path || ""} ${item.content}`);
-      const shared = tokens.filter((token) => qSet.has(token)).length;
+      const tokens = distinctiveTokens(`${item.path || ""} ${item.content}`).map(foldToken);
+      let sharedTokens = tokens.filter((token) => qSet.has(token));
+      if (petQuery && memoryFactKey(item.content) === "identity" && !/\b(dog|cat|pet|hond|kat)\b/i.test(item.content)) {
+        sharedTokens = sharedTokens.filter((token) => token !== "name" && token !== "naam" && token !== "identiteit" && token !== "identity");
+      }
+      const shared = sharedTokens.length;
       const pathHit = pathParts(item.path).some((part) => part.length >= 3 && query.toLowerCase().includes(part.toLowerCase()));
       const score = shared + (pathHit ? 2 : 0);
       return { item, score };
@@ -153,14 +173,35 @@ function section(title: string, labels: string[]) {
   return `[${title}]\n${unique.map((item) => `- ${item}`).join("\n")}`;
 }
 
+function publicMemoryText(memory: MemoryRow) {
+  return presentMemoryContent(memory.content || "")
+    .replace(/<\/?memory_context>/gi, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 400);
+}
+
+function lineIncluded(rendered: string, memory: MemoryRow) {
+  return rendered.split("\n").includes(`- ${memoryLabel(memory)}`);
+}
+
+export type MemoryUsageMeta = {
+  memoryUsed: boolean;
+  memoryIds: string[];
+  memories: UsedMemory[];
+  context: string;
+};
+
+const EMPTY_MEMORY_USAGE: MemoryUsageMeta = { memoryUsed: false, memoryIds: [], memories: [], context: "" };
+
 /** Open WebUI-style system snippet: user notes (capped) + retrieved context. */
-export function buildMemoryContext(
+export function composeMemoryContext(
   memories: MemoryRow[],
   query: string,
   opts?: { userLimit?: number; contextLimit?: number; k?: number },
 ) {
   const q = query.trim();
-  if (!q || !memories.length) return "";
+  if (!q || !memories.length) return { text: "", used: [] as UsedMemory[] };
   const userLimit = Math.max(250, opts?.userLimit ?? MEMORY_USER_CHAR_LIMIT);
   const contextLimit = Math.max(250, opts?.contextLimit ?? MEMORY_CONTEXT_CHAR_LIMIT);
   const k = opts?.k ?? MEMORY_RETRIEVE_K;
@@ -169,34 +210,97 @@ export function buildMemoryContext(
     .sort((a, b) => `${a.path || ""}\0${a.updatedAt || 0}`.localeCompare(`${b.path || ""}\0${b.updatedAt || 0}`));
   const userTaken = takeUntil(userAll, userLimit);
   const seen = new Set(userTaken.map((item) => item.id));
-  const neighborhood: string[] = [];
-  const relevant: string[] = [];
+  const retrieved = new Set<string>();
+  const neighborhood: MemoryRow[] = [];
+  const relevant: MemoryRow[] = [];
 
   for (const hint of memoryPathHints(q, memories)) {
     for (const memory of searchMemoryRows(memories, { path: hint, memoryType: "context", limit: 4 })) {
+      retrieved.add(memory.id);
       if (seen.has(memory.id)) continue;
       seen.add(memory.id);
-      neighborhood.push(memoryLabel(memory));
+      neighborhood.push(memory);
     }
   }
 
   for (const memory of rankMemories(memories, q, k)) {
+    retrieved.add(memory.id);
     if (seen.has(memory.id)) continue;
     seen.add(memory.id);
-    relevant.push(memoryLabel(memory));
+    relevant.push(memory);
   }
 
   const userPart = section("User Memory", userTaken.map(memoryLabel)).slice(0, userLimit);
   const contextPart = [
-    section("Memory Neighborhood", neighborhood),
-    section("Relevant Context", relevant),
+    section("Memory Neighborhood", neighborhood.map(memoryLabel)),
+    section("Relevant Context", relevant.map(memoryLabel)),
   ]
     .filter(Boolean)
     .join("\n\n");
   const contextCapped = contextPart.slice(0, contextLimit);
   const rendered = [userPart, contextCapped].filter(Boolean).join("\n\n").trim();
-  if (!rendered) return "";
-  return `${MEMORY_CONTEXT_OPEN}\n${rendered}\n${MEMORY_CONTEXT_CLOSE}`;
+  if (!rendered) return { text: "", used: [] as UsedMemory[] };
+  const used: UsedMemory[] = [];
+  const seenIds = new Set<string>();
+  for (const memory of [...userTaken, ...neighborhood, ...relevant]) {
+    if (!memory.id || !retrieved.has(memory.id) || seenIds.has(memory.id) || !lineIncluded(rendered, memory)) continue;
+    const content = publicMemoryText(memory);
+    if (!content) continue;
+    seenIds.add(memory.id);
+    used.push({ id: memory.id, content });
+  }
+  return { text: `${MEMORY_CONTEXT_OPEN}\n${rendered}\n${MEMORY_CONTEXT_CLOSE}`, used: parseUsedMemories(used) };
+}
+
+export function buildMemoryContext(
+  memories: MemoryRow[],
+  query: string,
+  opts?: { userLimit?: number; contextLimit?: number; k?: number },
+) {
+  return composeMemoryContext(memories, query, opts).text;
+}
+
+function retrievedMemoryIds(memories: MemoryRow[], query: string) {
+  const ids = new Set<string>();
+  for (const hint of memoryPathHints(query, memories)) {
+    for (const memory of searchMemoryRows(memories, { path: hint, memoryType: "context", limit: 4 })) ids.add(memory.id);
+  }
+  for (const memory of rankMemories(memories, query)) ids.add(memory.id);
+  return ids;
+}
+
+export function memoryUsageForTurn(input: {
+  enabled: boolean;
+  userId: string;
+  memories: Array<MemoryRow & { userId?: string | null }>;
+  query: string;
+  current?: string;
+}): MemoryUsageMeta {
+  if (!input.enabled) return { ...EMPTY_MEMORY_USAGE, memoryIds: [], memories: [] };
+  try {
+    const owned = input.memories.filter((row) => row.userId == null || row.userId === input.userId);
+    const built = composeMemoryContext(owned, input.query);
+    const ids = new Set(owned.map((row) => row.id));
+    const focus = (input.current || "").trim();
+    const focusIds = focus ? retrievedMemoryIds(owned, focus) : null;
+    const memories = built.used.filter((row) => ids.has(row.id) && (!focusIds || focusIds.has(row.id)));
+    if (!built.text || !memories.length) {
+      return { memoryUsed: false, memoryIds: [], memories: [], context: built.text };
+    }
+    return {
+      memoryUsed: true,
+      memoryIds: memories.map((row) => row.id),
+      memories,
+      context: built.text,
+    };
+  } catch {
+    return { ...EMPTY_MEMORY_USAGE, memoryIds: [], memories: [] };
+  }
+}
+
+export function memoryUsedPayload(meta: MemoryUsageMeta) {
+  if (!meta.memoryUsed || !meta.memories.length) return null;
+  return { memoryUsed: true as const, memoryIds: meta.memoryIds, memories: meta.memories };
 }
 
 export function listMemoryPathGroups(memories: MemoryRow[], limit = 100) {

@@ -10,7 +10,7 @@
     "build": "npm run build -w @wlfv/shared && npm run build -w @wlfv/server && npm run build -w @wlfv/web",
     "typecheck": "npm run typecheck -w @wlfv/shared && npm run typecheck -w @wlfv/server && npm run typecheck -w @wlfv/web",
     "lint": "npm run lint -w @wlfv/web --if-present",
-    "test": "npm run test -w @wlfv/server",
+    "test": "npm run test -w @wlfv/server && npm run test -w @wlfv/web",
     "db:migrate": "npm run db:migrate -w @wlfv/server"
   },
   "devDependencies": {

@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { DEFAULT_AUTH_CONFIG, parseUserRole, type AuthConfig } from "@wlfv/shared";
 import { api } from "@/lib/api";
 import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar";
+import { useAutoSave } from "@/components/settings/useAutoSave";
 import { Switch } from "@/components/ui/switch";
 import { useT } from "@/lib/language";
 
@@ -50,29 +51,16 @@ const inputClass = "mt-1 h-9 w-full rounded-lg bg-[var(--surface)] px-3 text-[13
 export function AuthPanel() {
   const tr = useT();
   const [config, setConfig] = useState<AuthConfig>(DEFAULT_AUTH_CONFIG);
-  const [status, setStatus] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [ready, setReady] = useState(false);
+  const { saving, status } = useAutoSave(config, ready, (next) => api.send("/api/admin/auth", "PATCH", next));
 
   useEffect(() => {
     api
       .get("/api/admin/auth")
       .then((data) => setConfig(data.config as AuthConfig))
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => setReady(true));
   }, []);
-
-  async function save() {
-    setSaving(true);
-    try {
-      const saved = await api.send("/api/admin/auth", "PATCH", config);
-      setConfig(saved.config);
-      setStatus(tr("saved"));
-      setTimeout(() => setStatus(""), 1200);
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : tr("couldNotSave"));
-    } finally {
-      setSaving(false);
-    }
-  }
 
   return (
     <div className="max-w-xl pr-8">
@@ -120,7 +108,7 @@ export function AuthPanel() {
           onChange={(event) => setConfig({ ...config, pendingOverlayContent: event.target.value })}
         />
       </Field>
-      <SettingsSaveBar saving={saving} status={status} onSave={() => void save()} />
+      <SettingsSaveBar saving={saving} status={status} />
     </div>
   );
 }

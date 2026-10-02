@@ -125,6 +125,7 @@ export function ContextUsage({
                 <div>
                   <p className="text-[13px] font-medium text-[var(--text)]">{tr("contextUsage")}</p>
                   {known ? <p className="text-[12px] text-[var(--muted)]">{tr("contextFull", { n: percent })}</p> : null}
+                  {known && percent >= 90 ? <p className="mt-1 max-w-[14rem] text-[12px] text-[var(--secondary)]">{tr("contextWillReset")}</p> : null}
                 </div>
                 <div className="flex items-center gap-2">
                   <p className="text-[12px] text-[var(--secondary)]">{label}</p>

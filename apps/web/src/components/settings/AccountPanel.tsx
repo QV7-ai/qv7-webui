@@ -2,6 +2,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import { WORK_GROUPS, WORK_ROLES } from "@wlfv/shared";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar";
+import { useAutoSave } from "@/components/settings/useAutoSave";
 import { t, type UiLang } from "@/lib/i18n";
 
 const inputClass =
@@ -26,12 +28,19 @@ export function AccountPanel({
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
   const [passwordMessage, setPasswordMessage] = useState("");
   const [passwordError, setPasswordError] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [ready, setReady] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
+  const profile = { displayName, preferredName, work, username, bio, gender, birthday, email };
+  const { saving, status } = useAutoSave(profile, ready, async (next) => {
+    const data = await api.send("/api/account", "PATCH", next);
+    onProfileChange?.({
+      username: data.user.username,
+      email: data.user.email,
+      displayName: data.user.displayName,
+    });
+  });
 
   useEffect(() => {
     api
@@ -45,42 +54,10 @@ export function AccountPanel({
         setGender(d.user.gender || "");
         setBirthday(d.user.birthday || "");
         setEmail(d.user.email || "");
+        setReady(true);
       })
       .catch(() => undefined);
   }, []);
-
-  async function saveProfile(event: FormEvent) {
-    event.preventDefault();
-    setSaving(true);
-    setError("");
-    setMessage("");
-    try {
-      const data = await api.send("/api/account", "PATCH", {
-        displayName,
-        preferredName,
-        work,
-        username,
-        bio,
-        gender,
-        birthday,
-        email,
-      });
-      onProfileChange?.({
-        username: data.user.username,
-        email: data.user.email,
-        displayName: data.user.displayName,
-      });
-      setDisplayName(data.user.displayName);
-      setPreferredName(data.user.preferredName || "");
-      setWork(data.user.work || "");
-      setUsername(data.user.username);
-      setMessage(t(lang, "accountUpdated"));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t(lang, "accountUpdateError"));
-    } finally {
-      setSaving(false);
-    }
-  }
 
   async function savePassword(event: FormEvent) {
     event.preventDefault();
@@ -111,7 +88,7 @@ export function AccountPanel({
   return (
     <div>
       <h2 className="text-[22px] font-medium">{t(lang, "account")}</h2>
-      <form className="mt-6 max-w-md space-y-4" onSubmit={(event) => void saveProfile(event)}>
+      <form className="mt-6 max-w-md space-y-4" onSubmit={(event) => event.preventDefault()}>
         <label className="block text-[13px]">
           {t(lang, "accountName")}
           <input
@@ -200,11 +177,7 @@ export function AccountPanel({
             autoComplete="email"
           />
         </label>
-        {error ? <p className="text-[13px] text-[var(--danger)]">{error}</p> : null}
-        {message ? <p className="text-[13px] text-[var(--accent)]">{message}</p> : null}
-        <Button type="submit" variant="primary" disabled={saving}>
-          {saving ? t(lang, "saving") : t(lang, "save")}
-        </Button>
+        <SettingsSaveBar saving={saving} status={status} />
       </form>
       <form className="mt-10 max-w-md space-y-4" onSubmit={(event) => void savePassword(event)}>
         <h3 className="text-[16px] font-medium">{t(lang, "changePassword")}</h3>

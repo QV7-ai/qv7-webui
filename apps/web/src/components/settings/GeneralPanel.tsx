@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { applyMotion, applyTheme, fieldLabel, t, type UiLang, GENERATION_FIELDS, clampTextSize, TEXT_SIZE_MAX, TEXT_SIZE_MIN, TEXT_SIZE_STEP } from "@/lib/i18n";
 import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar";
+import { useAutoSave } from "@/components/settings/useAutoSave";
 
 function Field({
   title,
@@ -59,6 +60,7 @@ export function GeneralPanel({
   onAnimations,
   onSystemPrompt,
   onGeneration,
+  ready,
 }: {
   theme: string;
   language: UiLang;
@@ -76,13 +78,26 @@ export function GeneralPanel({
   onAnimations: (value: boolean) => void;
   onSystemPrompt: (value: string) => void;
   onGeneration: (value: GenerationSettings) => void;
+  ready: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const [customKey, setCustomKey] = useState("");
   const [customValue, setCustomValue] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState("");
   const lang = language;
+  const { saving, status } = useAutoSave(
+    {
+      theme,
+      language,
+      textSize,
+      showUsage,
+      loadToolsWhenNeeded,
+      animations,
+      systemPrompt,
+      generation: { ...generation, show: false },
+    },
+    ready,
+    (next) => api.send("/api/settings", "PATCH", next),
+  );
 
   function setValue(key: string, value: string) {
     const values = { ...generation.values };
@@ -93,29 +108,6 @@ export function GeneralPanel({
 
   function setShow(show: boolean) {
     onGeneration({ ...generation, show });
-  }
-
-  async function save() {
-    setSaving(true);
-    setStatus("");
-    try {
-      await api.send("/api/settings", "PATCH", {
-        theme,
-        language,
-        textSize,
-        showUsage,
-        loadToolsWhenNeeded,
-        animations,
-        systemPrompt,
-        generation: { ...generation, show: false },
-      });
-      setStatus(t(lang, "saved"));
-      setTimeout(() => setStatus(""), 1200);
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : t(lang, "couldNotSave"));
-    } finally {
-      setSaving(false);
-    }
   }
 
   return (
@@ -333,7 +325,7 @@ export function GeneralPanel({
           </Button>
         </div>
       </div>
-      <SettingsSaveBar saving={saving} status={status} onSave={() => void save()} label={t(lang, "save")} />
+      <SettingsSaveBar saving={saving} status={status} />
     </div>
   );
 }

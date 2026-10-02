@@ -97,7 +97,7 @@ Motion is on unless the user turns it off. That sets `html[data-motion]`. `prefe
 - A control does what its label says. A toggle with a check is on. A chip in the composer can be clicked again to turn that tool off.
 - Confirm before a destructive delete. The dialog names the thing being removed. Nothing is deleted on the first click.
 - If a tool is disabled for normal users, omit it. Do not show a dead row. Admins still see it.
-- Show Thinking only when the model can think. Show Reasoning only when it has reasoning levels. Show Beta only on Canvas and web search.
+- Show Thinking only when the model can think. Show Reasoning only when it has reasoning levels. Show Beta on Canvas, web search, and Document.
 - Reasoning effort appears in the plus menu and in model settings only when that model has levels. Choosing a level turns thinking on.
 - Switching chats closes the canvas. A new file in the chat you are in opens it again. The card on an older message still opens that file.
 - The canvas preview iframe reloads every 5 seconds while tokens stream. The code view stays live. Opening Preview paints the latest HTML immediately.
@@ -115,17 +115,17 @@ Motion is on unless the user turns it off. That sets `html[data-motion]`. `prefe
 
 **Plus menu.** Desktop is an elevated flyout about 14rem wide. Phone is a bottom sheet titled “Add to chat”: large tiles for files and images, then rows for reasoning effort, tools, and skills. One section open at a time. Beta is a tag on the row, never a sentence under it.
 
-**Composer.** One rounded field. Plus and the context ring sit on the left. Active tools become accent chips. Thinking and send sit on the right. Stop replaces send while a reply is streaming.
+**Composer.** One rounded field. Plus and the context ring sit on the left. Active tools become accent chips. Thinking and send sit on the right. Stop replaces send while a reply is streaming. Upload files accepts images, Markdown, and Word (.docx). The model reads the text from Markdown and Word files. A dropped file uses the same path. The drop label is “Drop a file to attach” / “Sleep een bestand om bij te voegen”. Document saves a Word file (.docx). A spreadsheet, plain-text, or HTML request still uses that format.
 
 **Dialogs.** Scrim button covers the screen and cancels. The panel is elevated, about `max-w-sm`, with an `h2`, one short description, then Cancel and the action aligned to the end. Instructions on the phone use the same bottom sheet as the plus menu. On desktop, instructions are two columns and the preview stays on the right.
 
-**Settings.** A title, then sections. Each toggle has a title and one hint. Save is explicit. Do not write a setting on every keystroke unless the control is only visual (theme, motion, text size apply immediately and still persist with the form).
+**Settings.** A title, then sections. Each toggle has a title and one hint. Changes save on their own after a short pause. The page shows Saving…, then Saved. Password, another user’s account, a connection draft, and a model draft still use a Save button.
 
 **Models.** The name is the title. Main and private stay as words. Thinking and Reasoning are pills and are omitted when the model does not have that capability.
 
 **Lists.** A row is a single hit target. The trailing control is a switch, a check, or an icon button with an accessible name. Search filters the list in place. Load more reveals the next page. Do not paginate with a page number the user must type.
 
-**Canvas.** Header: title, Beta, the beta line, Preview, Code, copy, download, close. Preview is a sandboxed iframe (`allow-scripts`, not `allow-same-origin`). Generated files are one HTML document. Styling is Tailwind classes on the elements, with the Tailwind script and Font Awesome in the head. A separate CSS block in the chat is folded into that file and hidden.
+**Canvas.** Header: title, Beta, the beta line, Preview, Code, copy, share, download, close. Share copies a link when sharing is on. Opening that link shows the page on its own, full screen. When the chat has more than one canvas, the canvas top bar shows a left arrow, the version number, and a right arrow. Those arrows open that version. The card in the chat only opens that canvas. Preview is a sandboxed iframe (`allow-scripts`, not `allow-same-origin`). Generated files are one HTML document. Styling is Tailwind classes on the elements, with the Tailwind script and Font Awesome in the head. A separate CSS block in the chat is folded into that file and hidden.
 
 ## Writing
 

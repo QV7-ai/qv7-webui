@@ -7,7 +7,7 @@ import { eq } from "drizzle-orm";
 import { openDb } from "./db/index.ts";
 import { memories, users } from "./db/schema.ts";
 import type { Env } from "./env.ts";
-import { saveUserMemories } from "./memory.ts";
+import { repairFalseBirthdayMemories, saveUserMemories } from "./memory.ts";
 import { fallbackMemoryDrafts, isDurableMemory } from "./memory-ops.ts";
 
 test("persists the name message and the hobbies message", () => {
@@ -44,6 +44,21 @@ test("persists the name message and the hobbies message", () => {
   assert.match(hobbies.content, /\bit\b/i);
   assert.equal(hobbies.path, "Interests");
   assert.equal(hobbies.category, "preference");
+  db.insert(memories)
+    .values({
+      id: "bad-name",
+      userId: "user-1",
+      content: "Name: Diesel is the user's dog, Age: 22, Birthday: May 7, 2004",
+      category: "identity",
+      path: "Identity",
+      memoryType: "user",
+      importance: 70,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .run();
+  const repaired = repairFalseBirthdayMemories(db, "user-1").find((row) => row.id === "bad-name");
+  assert.equal(repaired?.content, "Age: 22, Birthday: May 7, 2004. The user's dog is called Diesel.");
   for (const extra of [file, `${file}-wal`, `${file}-shm`]) {
     try {
       fs.rmSync(extra, { force: true });

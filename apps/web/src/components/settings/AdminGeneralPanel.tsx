@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { DEFAULT_APP_GENERAL, type AppGeneralConfig } from "@wlfv/shared";
 import { api } from "@/lib/api";
 import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar";
+import { useAutoSave } from "@/components/settings/useAutoSave";
 import { Switch } from "@/components/ui/switch";
 import { useT } from "@/lib/language";
 
@@ -50,30 +51,19 @@ const inputClass = "mt-1 h-9 w-full rounded-lg bg-[var(--surface)] px-3 text-[13
 export function AdminGeneralPanel({ onChange }: { onChange?: (config: AppGeneralConfig) => void }) {
   const tr = useT();
   const [config, setConfig] = useState<AppGeneralConfig>(DEFAULT_APP_GENERAL);
-  const [status, setStatus] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [ready, setReady] = useState(false);
+  const { saving, status } = useAutoSave(config, ready, async (next) => {
+    const saved = await api.send("/api/admin/general", "PATCH", next);
+    onChange?.(saved.config as AppGeneralConfig);
+  });
 
   useEffect(() => {
     api
       .get("/api/admin/general")
       .then((data) => setConfig(data.config as AppGeneralConfig))
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => setReady(true));
   }, []);
-
-  async function save() {
-    setSaving(true);
-    try {
-      const saved = await api.send("/api/admin/general", "PATCH", config);
-      setConfig(saved.config);
-      onChange?.(saved.config);
-      setStatus(tr("saved"));
-      setTimeout(() => setStatus(""), 1200);
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : tr("couldNotSave"));
-    } finally {
-      setSaving(false);
-    }
-  }
 
   return (
     <div className="max-w-xl pr-8">
@@ -198,7 +188,7 @@ export function AdminGeneralPanel({ onChange }: { onChange?: (config: AppGeneral
           />
         </Field>
       </div>
-      <SettingsSaveBar saving={saving} status={status} onSave={() => void save()} />
+      <SettingsSaveBar saving={saving} status={status} />
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { Switch } from "@/components/ui/switch";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { t, type UiLang } from "@/lib/i18n";
 import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar";
+import { useAutoSave } from "@/components/settings/useAutoSave";
 
 type Memory = { id: string; content: string; category: string; path?: string; memoryType?: string; updatedAt?: number; createdAt?: number };
 
@@ -102,8 +103,9 @@ export function MemoryPanel({ language }: { language: UiLang }) {
     | { type: "import"; items: { content: string; category: string; path: string; memoryType: string }[] }
     | null
   >(null);
-  const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState("");
+  const [ready, setReady] = useState(false);
+  const loadedOnce = useRef(false);
+  const { saving, status } = useAutoSave(enabled, ready, (memoryEnabled) => api.send("/api/settings", "PATCH", { memoryEnabled }));
 
   useEffect(() => {
     let cancelled = false;
@@ -112,7 +114,11 @@ export function MemoryPanel({ language }: { language: UiLang }) {
         .get("/api/memory")
         .then((d) => {
           if (cancelled) return;
-          setEnabled(d.enabled !== false);
+          if (!loadedOnce.current) {
+            loadedOnce.current = true;
+            setEnabled(d.enabled !== false);
+            setReady(true);
+          }
           setMemories(Array.isArray(d.memories) ? d.memories : []);
         })
         .catch((err) => {
@@ -166,23 +172,7 @@ export function MemoryPanel({ language }: { language: UiLang }) {
         <span>{t(lang, "memoryEnabled")}</span>
         <Switch checked={enabled} onChange={setEnabled} label={t(lang, "memoryEnabled")} />
       </label>
-      <SettingsSaveBar
-        saving={saving}
-        status={status}
-        onSave={() => {
-          setSaving(true);
-          setStatus("");
-          void api
-            .send("/api/settings", "PATCH", { memoryEnabled: enabled })
-            .then(() => {
-              setStatus("Saved");
-              setTimeout(() => setStatus(""), 1200);
-            })
-            .catch((err) => setStatus(err instanceof Error ? err.message : t(lang, "memorySaveError")))
-            .finally(() => setSaving(false));
-        }}
-        label={t(lang, "save")}
-      />
+      <SettingsSaveBar saving={saving} status={status} />
       <div className="mt-6 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
         <p className="text-[12px] text-[var(--muted)]">{t(lang, "addMemory")}</p>
         <textarea

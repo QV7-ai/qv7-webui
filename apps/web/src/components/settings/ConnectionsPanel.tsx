@@ -10,6 +10,7 @@ import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar";
+import { useAutoSave } from "@/components/settings/useAutoSave";
 import { useT } from "@/lib/language";
 
 function blank(kind: ConnectionKind): ProviderConnection {
@@ -35,13 +36,16 @@ function blank(kind: ConnectionKind): ProviderConnection {
 export function ConnectionsPanel() {
   const tr = useT();
   const [config, setConfig] = useState<ConnectionsConfig>(DEFAULT_CONNECTIONS);
-  const [status, setStatus] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [note, setNote] = useState("");
   const [ready, setReady] = useState(false);
   const [editing, setEditing] = useState<ProviderConnection | null>(null);
   const configRef = useRef(config);
   const dirtyRef = useRef(false);
   configRef.current = config;
+  const { saving, status } = useAutoSave(config, ready, async (next) => {
+    await api.send("/api/admin/connections", "PATCH", { config: next });
+    dirtyRef.current = false;
+  });
 
   useEffect(() => {
     let ignore = false;
@@ -55,7 +59,13 @@ export function ConnectionsPanel() {
       })
       .catch(() => undefined)
       .finally(() => {
-        if (!ignore) setReady(true);
+        if (ignore) return;
+        const pending = dirtyRef.current ? configRef.current : null;
+        setReady(true);
+        if (!pending) return;
+        void api.send("/api/admin/connections", "PATCH", { config: pending }).then(() => {
+          dirtyRef.current = false;
+        });
       });
     return () => {
       ignore = true;
@@ -69,24 +79,6 @@ export function ConnectionsPanel() {
     return next;
   }
 
-  async function persist(next: ConnectionsConfig) {
-    if (!ready) return;
-    setSaving(true);
-    try {
-      const saved = await api.send("/api/admin/connections", "PATCH", { config: next });
-      const resolved = saved.config as ConnectionsConfig;
-      dirtyRef.current = false;
-      configRef.current = resolved;
-      setConfig(resolved);
-      setStatus(tr("saved"));
-      setTimeout(() => setStatus(""), 1200);
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : tr("couldNotSave"));
-    } finally {
-      setSaving(false);
-    }
-  }
-
   function updateList(kind: ConnectionKind, list: ProviderConnection[]) {
     apply({ ...configRef.current, [kind]: list });
   }
@@ -97,14 +89,13 @@ export function ConnectionsPanel() {
     const list = current[key];
     const exists = list.some((item) => item.id === conn.id);
     const nextList = exists ? list.map((item) => (item.id === conn.id ? conn : item)) : [...list, conn];
-    const next = apply({
+    apply({
       ...current,
       [key]: nextList,
       openaiEnabled: key === "openai" ? true : current.openaiEnabled,
       ollamaEnabled: key === "ollama" ? true : current.ollamaEnabled,
     });
     setEditing(null);
-    void persist(next);
   }
 
   return (
@@ -172,7 +163,7 @@ export function ConnectionsPanel() {
             }
             onEdit={() => setEditing(conn)}
             onPull={() => {
-              void api.send("/api/admin/ollama/refresh", "POST").then(() => setStatus("Models refreshed")).catch((err) => setStatus(err instanceof Error ? err.message : "Refresh failed"));
+              void api.send("/api/admin/ollama/refresh", "POST").then(() => setNote("Models refreshed")).catch((err) => setNote(err instanceof Error ? err.message : "Refresh failed"));
             }}
           />
         ))}
@@ -208,7 +199,7 @@ export function ConnectionsPanel() {
           label="Cache Base Model List"
         />
       </div>
-      <SettingsSaveBar saving={saving || !ready} status={status} onSave={() => void persist(configRef.current)} />
+      <SettingsSaveBar saving={saving} status={note || status} />
 
       {editing ? (
         <ConnectionEditor
@@ -219,7 +210,7 @@ export function ConnectionsPanel() {
             const current = configRef.current;
             const list = current[editing.kind].filter((item) => item.id !== editing.id);
             setEditing(null);
-            void persist(apply({ ...current, [editing.kind]: list }));
+            apply({ ...current, [editing.kind]: list });
           }}
         />
       ) : null}

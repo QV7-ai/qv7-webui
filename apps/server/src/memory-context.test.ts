@@ -43,6 +43,30 @@ test("caps user memories and retrieves matching hardware instead of dumping ever
   assert.ok(ranked.some((item) => /Blackview/.test(item.content)));
 });
 
+test("a question about the dog does not retrieve the user's name", () => {
+  const memories = [
+    {
+      id: "id",
+      content: "Name: Quinten, Age: 22, Birthday: May 7, 2004",
+      path: "Identity",
+      memoryType: "user",
+      updatedAt: 1,
+    },
+    {
+      id: "dog",
+      content: "The user's dog is called Diesel.",
+      path: "Other",
+      memoryType: "user",
+      updatedAt: 2,
+    },
+  ];
+  const ranked = rankMemories(memories, "what is my dogs name", 8);
+  assert.deepEqual(
+    ranked.map((item) => item.id),
+    ["dog"],
+  );
+});
+
 test("does not treat a greeting as a reason to retrieve hardware", () => {
   const memories = [
     { id: "1", content: "Blackview N97 mini-pc met 16 GB RAM", path: "Hardware", memoryType: "context", updatedAt: 1 },

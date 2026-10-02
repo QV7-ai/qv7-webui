@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { inflateRawSync } from "node:zlib";
 
 const EXTS = new Set(["md", "txt", "csv", "html", "docx"]);
 
@@ -87,6 +88,65 @@ export function buildDocx(markdown: string) {
   ]);
 }
 
+function zipEntry(buf: Buffer, wanted: string) {
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 65535); i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) return null;
+  const count = buf.readUInt16LE(eocd + 10);
+  let pos = buf.readUInt32LE(eocd + 16);
+  for (let n = 0; n < count && pos + 46 <= buf.length; n++) {
+    if (buf.readUInt32LE(pos) !== 0x02014b50) return null;
+    const method = buf.readUInt16LE(pos + 10);
+    const size = buf.readUInt32LE(pos + 20);
+    const nameLen = buf.readUInt16LE(pos + 28);
+    const extraLen = buf.readUInt16LE(pos + 30);
+    const commentLen = buf.readUInt16LE(pos + 32);
+    const localOff = buf.readUInt32LE(pos + 42);
+    const name = buf.subarray(pos + 46, pos + 46 + nameLen).toString("utf8").replace(/\\/g, "/");
+    pos += 46 + nameLen + extraLen + commentLen;
+    if (name !== wanted) continue;
+    const localName = buf.readUInt16LE(localOff + 26);
+    const localExtra = buf.readUInt16LE(localOff + 28);
+    const start = localOff + 30 + localName + localExtra;
+    const compressed = buf.subarray(start, start + size);
+    if (method === 0) return compressed;
+    if (method === 8) return inflateRawSync(compressed);
+    return null;
+  }
+  return null;
+}
+
+function decodeXml(text: string) {
+  return text
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'");
+}
+
+export function readDocxText(buf: Buffer) {
+  const xml = zipEntry(buf, "word/document.xml");
+  if (!xml) throw new Error("That Word file could not be read. Save it as .docx and try again.");
+  const text = decodeXml(
+    xml
+      .toString("utf8")
+      .replace(/<w:tab\/>/g, "\t")
+      .replace(/<w:br\/>/g, "\n")
+      .replace(/<\/w:p>/g, "\n")
+      .replace(/<[^>]+>/g, ""),
+  )
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (!text) throw new Error("That Word file has no readable text.");
+  return text;
+}
+
 export function safeDocumentName(raw: string, fallbackExt = "md") {
   const base = path.basename(String(raw || "").replace(/[\\/]/g, "")).replace(/[^\w.\- ()]+/g, "").trim().slice(0, 80);
   const ext = (base.match(/\.([a-z0-9]+)$/i)?.[1] || fallbackExt).toLowerCase();
@@ -96,11 +156,10 @@ export function safeDocumentName(raw: string, fallbackExt = "md") {
 }
 
 export function preferredDocumentExt(message: string) {
-  if (/\b(docx|word)\b/i.test(message)) return "docx";
   if (/\b(csv|spreadsheet|tabel)\b/i.test(message)) return "csv";
   if (/\b(plain text|\.txt|tekstbestand)\b/i.test(message)) return "txt";
   if (/\bhtml\b/i.test(message)) return "html";
-  return "md";
+  return "docx";
 }
 
 export function takeDocument(text: string, fallbackExt = "md") {
@@ -126,9 +185,11 @@ export function takeDocument(text: string, fallbackExt = "md") {
 }
 
 export async function materializeDocument(uploadsDir: string, content: string, userMessage: string) {
-  const taken = takeDocument(content, preferredDocumentExt(userMessage));
+  const preferred = preferredDocumentExt(userMessage);
+  const taken = takeDocument(content, preferred);
   if (!taken?.body) return null;
-  const filename = taken.filename;
+  const filename =
+    preferred === "docx" ? taken.filename.replace(/\.(md|markdown)$/i, ".docx") : taken.filename;
   const ext = filename.split(".").pop() || "md";
   const stored = `${randomUUID()}.${ext}`;
   const data = ext === "docx" ? buildDocx(taken.body) : Buffer.from(taken.body, "utf8");

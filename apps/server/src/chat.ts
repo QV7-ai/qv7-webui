@@ -8,8 +8,8 @@ import { chatBodySchema } from "./env.ts";
 import { thinkParam } from "./services/ollama/index.ts";
 import { parseShowCapabilities } from "./services/ollama/capabilities.ts";
 import { publicErrorMessage, OllamaError } from "./services/ollama/errors.ts";
-import { usageFromOllama, type UsageStats, type WebSearchSource, type ChatActivity, DEFAULT_SYSTEM_PROMPT, toolsPromptFor, stripToolMarkup, stripLeakedAssistant, parseGenerationSettings, parseInstructionTone, instructionToneLine, workRoleLabel, CANVAS_PROMPT, CANVAS_DESIGN, TASK_MODEL_CURRENT, type ConnectionsConfig, type ProviderConnection } from "@wlfv/shared";
-import { resolveModelConnection, resolveOllamaModel } from "./models.ts";
+import { usageFromOllama, type UsageStats, type WebSearchSource, type ChatActivity, parseUsedMemories, DEFAULT_SYSTEM_PROMPT, toolsPromptFor, stripToolMarkup, stripLeakedAssistant, parseGenerationSettings, parseInstructionTone, instructionToneLine, workRoleLabel, CANVAS_PROMPT, CANVAS_DESIGN, TASK_MODEL_CURRENT, type ConnectionsConfig, type ProviderConnection } from "@wlfv/shared";
+import { listLoadedModels, resolveModelConnection, resolveOllamaModel } from "./models.ts";
 import { loadWebSearch, runWebSearch } from "./web-search/index.ts";
 import { handleImageTurn, imagesEnabledFor } from "./images/turn.ts";
 import { loadAppGeneral } from "./app-general.ts";
@@ -23,11 +23,25 @@ import { extractRunnableBlocks, runCodeBlocks } from "./code-interpreter.ts";
 import { repairFalseBirthdayMemories } from "./memory.ts";
 import { reviewAndSaveMemories } from "./memory-review.ts";
 import { fallbackMemoryDrafts, shouldReviewMemory } from "./memory-ops.ts";
-import { buildMemoryContext, MEMORY_REVIEW_INTERVAL_TURNS } from "./memory-context.ts";
+import { MEMORY_REVIEW_INTERVAL_TURNS, memoryUsageForTurn, memoryUsedPayload, type MemoryUsageMeta } from "./memory-context.ts";
 import { materializeDocument, preferredDocumentExt } from "./documents.ts";
 import { bioAsUserFact, correctIdentityVoice, directIdentityReply } from "./identity.ts";
 import { executeToolCall, parseToolCalls, questionNeedsCode, questionNeedsSearch } from "./tools.ts";
 import { recordToolRun, recordMessageUsage, assertTokenQuota } from "./usage.ts";
+import {
+  cleanContextSummary,
+  clipTranscript,
+  compactionLimit,
+  estimateTokens,
+  fallbackContextSummary,
+  foldExceptLatest,
+  isContextOverflow,
+  promptFillsWindow,
+  resolveContextWindow,
+  splitContextTurns,
+  trimTurnContent,
+  type ContextTurn,
+} from "./context-compact.ts";
 import {
   beginLiveTurn,
   emitChat,
@@ -366,6 +380,10 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
                   return undefined;
                 }
               })(),
+              memoriesUsed: (() => {
+                const parsed = parseUsedMemories(m.memoriesUsed);
+                return parsed.length ? parsed : undefined;
+              })(),
               rating: m.rating || 0,
               createdAt: m.createdAt,
             };
@@ -467,13 +485,16 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
         pinned: 0,
         unread: 0,
         temporary: 0,
+        contextSummary: convo.contextSummary || "",
         createdAt: now,
         updatedAt: now,
       })
       .run();
     const msgs = db.select().from(messages).where(eq(messages.conversationId, id)).all();
+    const clonedIds = new Map<string, string>();
     for (const msg of msgs) {
       const cloneMsgId = randomUUID();
+      clonedIds.set(msg.id, cloneMsgId);
       db.insert(messages)
         .values({
           ...msg,
@@ -491,6 +512,10 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
         stats: msg.stats,
         createdAt: msg.createdAt,
       });
+    }
+    const until = convo.contextSummaryUntil ? clonedIds.get(convo.contextSummaryUntil) : undefined;
+    if (until) {
+      db.update(conversations).set({ contextSummaryUntil: until }).where(eq(conversations.id, cloneId)).run();
     }
     notifyChats(user.id, { conversationId: cloneId });
     return { conversation: { id: cloneId, title: `${convo.title} copy` } };
@@ -783,6 +808,7 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
         })()
       : Promise.resolve([]);
     const memoryDue = memoryOn && userTurnCount > 0 && userTurnCount % MEMORY_REVIEW_INTERVAL_TURNS === 0;
+    let memoryMeta: MemoryUsageMeta = { memoryUsed: false, memoryIds: [], memories: [], context: "" };
 
     let content = "";
     let thinkingText = "";
@@ -860,7 +886,18 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
         .filter(Boolean)
         .join("\n\n")
         .slice(-4000);
-      const memoryContext = memoryOn ? buildMemoryContext(mems, memoryQuery || storedUser) : "";
+      memoryMeta = memoryOn
+        ? memoryUsageForTurn({
+            enabled: true,
+            userId: user.id,
+            memories: mems,
+            query: memoryQuery || storedUser,
+            current: storedUser,
+          })
+        : memoryMeta;
+      const memoryContext = memoryMeta.context;
+      const memoryEvent = memoryUsedPayload(memoryMeta);
+      if (memoryEvent) emit("memoryUsed", memoryEvent);
       const offerSearch = Boolean(webSearch) || (loadTools && searchAllowed);
       const offerCode = Boolean(codeInterpreter) || (loadTools && codeAllowed && questionNeedsCode(currentAsk));
       const toolPrompt = userPrompt.includes("```tool") ? "" : toolsPromptFor({ search: offerSearch, memory: false });
@@ -893,11 +930,11 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
               .join("\n\n")
           : "Canvas is off. Do not output a complete HTML document, a ```html page, or a canvas file. If a skill asks for an HTML report or a canvas, answer in normal chat markdown instead.",
         documentMode
-          ? `Document is on. After one short sentence, output exactly one fenced file:\n\n\`\`\`document\nfilename: Title.${preferredDocumentExt(message)}\n\nThe full document.\n\`\`\`\n\nWrite the whole document inside the fence. Use Markdown headings and paragraphs. Do not say you cannot create files.`
+          ? `Document is on. After one short sentence, output exactly one fenced file:\n\n\`\`\`document\nfilename: Title.${preferredDocumentExt(message)}\n\nThe full document.\n\`\`\`\n\nWrite the whole document inside the fence. Use Markdown headings and paragraphs. The file is saved as that filename. Do not say you cannot create files.`
           : "",
         profileLines.length ? `User profile:\n${profileLines.map((line) => `- ${line}`).join("\n")}` : "",
         memoryContext
-          ? `${memoryContext}\n\nUse <memory_context> only when it helps. It is private notes about the user, not about you. Do not paste the whole list. Do not speak in the user's first person.`
+          ? `${memoryContext}\n\nUse <memory_context> only when it helps. It is private notes about the user, not about you. Do not paste the whole list. Do not speak in the user's first person. If the user asks for a pet's name, answer with that pet. Do not answer with the user's own name.`
           : "",
         feedbackGuidance(db, user.id),
         memoryOn
@@ -922,19 +959,138 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
         .filter(Boolean)
         .join("\n\n");
 
-      const prior = history
+      function packRow(id: string, role: string, raw: string) {
+        const msg = providerMessage(role, raw, uploadsDir);
+        if (role === "assistant" && msg.content) msg.content = correctIdentityVoice(msg.content, spokenName, work);
+        return { id, message: msg };
+      }
+      const ordered = history
         .filter((m) => m.id !== userMsgId && m.role !== "system")
-        .filter((m) => m.role !== "assistant" || Boolean(String(m.content || "").trim()))
-        .slice(-22);
-      const historyMessages: ProviderMessage[] = [
-        { role: "system", content: system },
-        ...prior.map((m) => {
-          const msg = providerMessage(m.role, m.content, uploadsDir);
-          if (m.role === "assistant" && msg.content) msg.content = correctIdentityVoice(msg.content, spokenName, work);
-          return msg;
-        }),
-        providerMessage("user", storedUser, uploadsDir),
-      ];
+        .filter((m) => m.role !== "assistant" || Boolean(String(m.content || "").trim()));
+      const coveredAt = convo.contextSummaryUntil ? ordered.findIndex((m) => m.id === convo.contextSummaryUntil) : -1;
+      const uncovered = coveredAt >= 0 ? ordered.slice(coveredAt + 1) : ordered;
+      let summary = (convo.contextSummary || "").trim();
+      let packed = [...uncovered.map((m) => packRow(m.id, m.role, m.content)), packRow(userMsgId, "user", storedUser)];
+      const activeModel = model;
+      if (!activeModel) throw new Error("Model missing");
+
+      function measuredPromptTokens() {
+        for (let i = history.length - 1; i >= 0; i--) {
+          const row = history[i];
+          if (row.role !== "assistant" || !row.stats) continue;
+          try {
+            const stats = JSON.parse(row.stats) as { inputTokens?: number; outputTokens?: number };
+            const used = Number(stats.inputTokens || 0) + Number(stats.outputTokens || 0);
+            if (used > 0) return used;
+          } catch {
+            /* skip a bad stats payload */
+          }
+        }
+        return 0;
+      }
+
+      async function contextWindow(usedTokens: number) {
+        const fromGen = Number(generation.values.num_ctx);
+        let loaded = 0;
+        try {
+          const running = (await listLoadedModels(db, env)).contexts[activeModel.id] || 0;
+          if (running > 0) loaded = running;
+        } catch {
+          /* use the model's advertised window */
+        }
+        return resolveContextWindow({
+          explicit: Number.isFinite(fromGen) ? fromGen : 0,
+          loaded,
+          advertised: activeModel.contextLength || 0,
+          usedTokens,
+        });
+      }
+
+      async function writeSummary(fold: ContextTurn[], previous: string) {
+        if (controller.signal.aborted) return previous;
+        const transcript = clipTranscript(previous, fold);
+        let next = "";
+        const task = conn?.url ? resolveTaskModel(db, env, connections, activeModel, conn) : null;
+        if (transcript && task?.remote && task.taskConn?.url) {
+          const summaryAbort = new AbortController();
+          const onAbort = () => summaryAbort.abort();
+          controller.signal.addEventListener("abort", onAbort);
+          const timer = setTimeout(() => summaryAbort.abort(), 20000);
+          try {
+            const raw = await completeForConnection(task.taskConn, {
+              model: task.remote,
+              messages: [
+                {
+                  role: "system",
+                  content:
+                    "Compress this chat so a new context window can continue it. Keep decisions, names, numbers, constraints, and unfinished tasks. Plain prose. No preamble. Under 500 words.",
+                },
+                { role: "user", content: transcript },
+              ],
+              signal: summaryAbort.signal,
+            });
+            next = cleanContextSummary(raw);
+          } catch {
+            next = "";
+          } finally {
+            clearTimeout(timer);
+            controller.signal.removeEventListener("abort", onAbort);
+          }
+        }
+        if (!next) next = fallbackContextSummary(previous, fold);
+        const until = fold[fold.length - 1]?.id;
+        if (next && until && until !== userMsgId) {
+          db.update(conversations)
+            .set({ contextSummary: next, contextSummaryUntil: until, updatedAt: Date.now() })
+            .where(eq(conversations.id, conversationId))
+            .run();
+        }
+        return next;
+      }
+
+      async function fitPacked(forceLatest: boolean) {
+        const used = measuredPromptTokens();
+        const window = await contextWindow(used);
+        const reserve = Number(generation.values.max_tokens);
+        const budget = compactionLimit(window, generation.values.context_compaction_threshold, Number.isFinite(reserve) ? reserve : 0);
+        const turns = packed.map((item) => ({ id: item.id, role: item.message.role, content: item.message.content || "" }));
+        const systemTokens = estimateTokens(system) + estimateTokens(summary);
+        const turnTokens = turns.reduce((sum, item) => sum + estimateTokens(item.content) + 8, 0);
+        const filled = promptFillsWindow(used, budget);
+        const over = budget > 0 && systemTokens + turnTokens > budget;
+        const uncapped = budget <= 0 && turns.length > 24;
+        if (!forceLatest && !filled && !over && !uncapped) return;
+        emitWait("compacting");
+        const turnBudget = filled ? Math.floor(window * 0.35) : budget;
+        const split = forceLatest
+          ? foldExceptLatest(turns, 1)
+          : uncapped
+            ? foldExceptLatest(turns, 18)
+            : splitContextTurns(turns, Math.max(256, turnBudget - estimateTokens(system)), 900);
+        if (split.fold.length) {
+          summary = await writeSummary(split.fold, summary);
+          const keepIds = new Set(split.keep.map((item) => item.id));
+          packed = packed.filter((item) => keepIds.has(item.id));
+        }
+        if (budget > 0 && packed.length) {
+          const last = packed[packed.length - 1];
+          const room = Math.max(400, budget - estimateTokens(system) - estimateTokens(summary) - 32);
+          if (estimateTokens(last.message.content || "") > room) {
+            last.message.content = trimTurnContent(last.message.content || "", room);
+          }
+        }
+      }
+
+      await fitPacked(false);
+
+      function historyFromPacked(): ProviderMessage[] {
+        const note = summary
+          ? `Earlier messages were compacted into a new context window. Continue from this summary. Do not mention the compaction unless the user asks.\n\n${summary}`
+          : "";
+        return [{ role: "system", content: [system, note].filter(Boolean).join("\n\n") }, ...packed.map((item) => item.message)];
+      }
+
+      let historyMessages = historyFromPacked();
       function weighPrompt(messages: ProviderMessage[]) {
         let systemChars = 0;
         let skills = 0;
@@ -1032,7 +1188,10 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
         return { think, visible };
       }
 
+      let contextRetried = false;
+      let deferredContextError = "";
       async function consume(streamMessages: ProviderMessage[]) {
+        deferredContextError = "";
         contextWeights = weighPrompt(streamMessages);
         for await (const event of streamForConnection(conn!, {
           model: ollamaModel || "",
@@ -1068,8 +1227,13 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
               }
             }
           } else if (event.type === "error") {
-            status = "error";
-            emit("error", { message: event.message });
+            if (!contextRetried && isContextOverflow(event.message)) {
+              deferredContextError = event.message;
+              status = "error";
+            } else {
+              status = "error";
+              emit("error", { message: event.message });
+            }
           } else if (event.type === "done") {
             usage = usageFromOllama(event.stats);
           }
@@ -1087,6 +1251,22 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
         emit("content", { delta: content });
       } else {
         await consume(historyMessages);
+        if (deferredContextError && !controller.signal.aborted) {
+          contextRetried = true;
+          status = "complete";
+          content = "";
+          thinkingText = "";
+          heldFence = "";
+          insideThink = false;
+          emit("content", { reset: true, delta: "" });
+          await fitPacked(true);
+          historyMessages = historyFromPacked();
+          await consume(historyMessages);
+          if (deferredContextError) {
+            status = "error";
+            emit("error", { message: deferredContextError });
+          }
+        }
       }
 
       const toolCtx = {
@@ -1279,6 +1459,7 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
           stats: usage ? JSON.stringify(usage) : null,
           sources: sources.length ? JSON.stringify(sources) : null,
           activities: activities.length ? JSON.stringify(activities) : null,
+          memoriesUsed: memoryMeta.memoryUsed ? JSON.stringify(memoryMeta.memories) : null,
           updatedAt: Date.now(),
         })
         .where(eq(messages.id, assistantId))
@@ -1338,8 +1519,13 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
       } else {
         db.update(conversations).set({ modelId: model.id, updatedAt: Date.now() }).where(eq(conversations.id, conversationId)).run();
       }
-      if (status !== "error") emit("done", { messageId: assistantId, usage });
-      else emit("done", { messageId: assistantId, usage, error: true });
+      const doneMemory = memoryUsedPayload(memoryMeta);
+      emit("done", {
+        messageId: assistantId,
+        usage,
+        ...(doneMemory || {}),
+        ...(status === "error" ? { error: true } : {}),
+      });
       endLiveTurn(conversationId);
       reply.raw.end();
       try {

@@ -7,6 +7,7 @@ import {
   memoriesOverlap,
   parseMemoryOperations,
   shouldReviewMemory,
+  rejectedMemoryClaim,
   summarizeMemoryFact,
 } from "./memory-ops.ts";
 import { eq } from "drizzle-orm";
@@ -44,6 +45,7 @@ function applyOps(
     if (op.action === "replace" && op.id && op.content) {
       const current = db.select().from(memories).where(eq(memories.id, op.id)).get();
       const content = summarizeMemoryFact(op.content);
+      if (rejectedMemoryClaim(content, userText)) continue;
       if (!current || current.userId !== userId || !memoriesOverlap(current.content, content)) {
         if (!isDurableMemory(op.content) && !isDurableMemory(content)) continue;
         saved.push(
@@ -75,7 +77,7 @@ function applyOps(
     if (op.action === "add" && op.content) {
       const content = summarizeMemoryFact(op.content);
       if (!isDurableMemory(op.content) && !isDurableMemory(content)) continue;
-      if (!groundedInUser(content, userText)) continue;
+      if (!groundedInUser(content, userText) || rejectedMemoryClaim(content, userText)) continue;
       saved.push(
         ...saveUserMemories(
           db,

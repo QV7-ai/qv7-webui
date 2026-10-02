@@ -6,6 +6,7 @@ import { loadAppGeneral } from "./app-general.ts";
 import type { DB } from "./db/index.ts";
 import { htmlToText } from "./web-search/search.ts";
 import { saveChatImage } from "./uploads.ts";
+import { readDocxText } from "./documents.ts";
 
 const TEXT_EXT = /\.(txt|md|markdown|csv|json|xml|html|css|js|ts|tsx|jsx|py|rs|go|java|c|cpp|h|yml|yaml|toml|ini|log|sql)$/i;
 const MAX_CHARS = 80000;
@@ -63,8 +64,16 @@ export function registerAttachments(app: FastifyInstance, db: DB, uploadsDir: st
       }
     }
     let text = "";
-    if (mime.startsWith("text/") || mime.includes("json") || TEXT_EXT.test(name)) {
-      text = clip(buf.toString("utf8"));
+    if (/\.docx$/i.test(name) || mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+      try {
+        text = clip(readDocxText(buf));
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof Error ? error.message : "That Word file could not be read." });
+      }
+    } else if (/\.doc$/i.test(name)) {
+      return reply.code(400).send({ error: "Save that Word file as .docx and upload it again." });
+    } else if (mime.startsWith("text/") || mime.includes("json") || TEXT_EXT.test(name)) {
+      text = clip(buf.toString("utf8").replace(/^\uFEFF/, ""));
     } else {
       text = `(Binary file attached: ${name}, ${buf.length} bytes.)`;
     }

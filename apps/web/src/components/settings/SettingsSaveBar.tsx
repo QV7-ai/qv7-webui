@@ -1,24 +1,13 @@
-import { Button } from "@/components/ui/button";
 import { useT } from "@/lib/language";
 
-export function SettingsSaveBar({
-  saving,
-  status,
-  onSave,
-  label,
-}: {
-  saving?: boolean;
-  status?: string;
-  onSave: () => void;
-  label?: string;
-}) {
+export function SettingsSaveBar({ saving, status }: { saving?: boolean; status?: string }) {
   const tr = useT();
+  const text = saving ? tr("saving") : status;
+  if (!text) return null;
+  const failed = !saving && status && status !== tr("saved");
   return (
-    <div className="mt-8 flex items-center gap-3">
-      <Button type="button" variant="primary" disabled={saving} onClick={onSave}>
-        {saving ? tr("saving") : label || tr("save")}
-      </Button>
-      {status ? <p className="text-[12px] text-[var(--muted)]">{status}</p> : null}
-    </div>
+    <p className={`mt-8 text-[12px] ${failed ? "text-[var(--danger)]" : "text-[var(--muted)]"}`} aria-live="polite">
+      {text}
+    </p>
   );
 }
