@@ -59,7 +59,7 @@ export async function verifyPassword(hash: string, password: string) {
   return argon2.verify(hash, password);
 }
 
-export type AuthUser = { id: string; email: string; username: string; role: "admin" | "user" | "pending" };
+export type AuthUser = { id: string; email: string; username: string; displayName: string; role: "admin" | "user" | "pending" };
 
 export async function getUser(req: FastifyRequest, db: DB): Promise<AuthUser | null> {
   const sid = req.cookies[COOKIE];
@@ -68,7 +68,13 @@ export async function getUser(req: FastifyRequest, db: DB): Promise<AuthUser | n
   if (!row || row.expiresAt < Date.now()) return null;
   const user = db.select().from(users).where(eq(users.id, row.userId)).get();
   if (!user) return null;
-  return { id: user.id, email: user.email, username: user.username, role: parseUserRole(user.role) };
+  return {
+    id: user.id,
+    email: user.email,
+    username: user.username,
+    displayName: user.displayName || user.username,
+    role: parseUserRole(user.role),
+  };
 }
 
 export async function requireUser(req: FastifyRequest, reply: FastifyReply, db: DB) {
@@ -97,8 +103,14 @@ export async function requireAdmin(req: FastifyRequest, reply: FastifyReply, db:
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const USERNAME = /^[a-z0-9_]{3,30}$/;
 
-function publicAuthUser(user: { id: string; email: string; username: string; role: string }) {
-  return { id: user.id, email: user.email, username: user.username, role: parseUserRole(user.role) };
+function publicAuthUser(user: { id: string; email: string; username: string; displayName?: string; role: string }) {
+  return {
+    id: user.id,
+    email: user.email,
+    username: user.username,
+    displayName: user.displayName || user.username,
+    role: parseUserRole(user.role),
+  };
 }
 
 function issueSession(reply: FastifyReply, db: DB, env: Env, userId: string) {

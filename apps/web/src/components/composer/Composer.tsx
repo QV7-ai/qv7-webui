@@ -1,5 +1,5 @@
-import { ArrowUp, Brain, Check, ChevronRight, FileUp, Globe, ImagePlus, Images, Link2, PanelsTopLeft, Plus, Shield, ShieldAlert, Sparkles, Square, Terminal, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
+import { ArrowUp, Brain, Check, ChevronRight, FileText, FileUp, Globe, ImagePlus, Images, Link2, PanelsTopLeft, Plus, Shield, ShieldAlert, Sparkles, Square, Terminal, X } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { ChatModel } from "@wlfv/shared";
 import { api } from "@/lib/api";
@@ -7,6 +7,8 @@ import { ContextUsage } from "./ContextUsage";
 import { ThinkingToggle } from "./ThinkingToggle";
 import { useT } from "@/lib/language";
 import { isPhoneViewport, PHONE_QUERY } from "@/lib/layout";
+
+const ASK_PROMPTS = ["askPrompt1", "askPrompt2", "askPrompt3", "askPrompt4", "askPrompt5", "askPrompt6", "askPrompt7", "askPrompt8"] as const;
 
 export type ComposerAttachment = {
   id: string;
@@ -44,6 +46,8 @@ type Props = {
   onCodeInterpreter?: (enabled: boolean) => void;
   canvas?: boolean;
   canvasAvailable?: boolean;
+  document?: boolean;
+  onDocument?: (on: boolean) => void;
   webpageAvailable?: boolean;
   onCanvas?: (enabled: boolean) => void;
   skills?: { id: string; name: string }[];
@@ -92,6 +96,8 @@ export function Composer({
   canvasAvailable = true,
   webpageAvailable = true,
   onCanvas,
+  document: documentOn,
+  onDocument,
   skills = [],
   selectedSkillIds = [],
   onToggleSkill,
@@ -105,6 +111,7 @@ export function Composer({
 }: Props) {
   const tr = useT();
   const ref = useRef<HTMLTextAreaElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const plusRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -121,6 +128,8 @@ export function Composer({
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [phone, setPhone] = useState(() => isPhoneViewport());
+  const [askIndex, setAskIndex] = useState(() => Math.floor(Math.random() * ASK_PROMPTS.length));
+  const [mentionPos, setMentionPos] = useState({ top: 0, left: 0, width: 0, above: true });
   const [sheetSection, setSheetSection] = useState<null | "tools" | "skills" | "effort">(null);
 
   attachmentsRef.current = attachments;
@@ -152,6 +161,7 @@ export function Composer({
     if (canvasAvailable) {
       tools.push({ id: "canvas", kind: "tool", label: tr("canvas"), icon: <PanelsTopLeft size={15} />, run: () => onCanvas?.(true) });
     }
+    tools.push({ id: "document", kind: "tool", label: tr("document"), icon: <FileText size={15} />, run: () => onDocument?.(true) });
     if (imageGenerationAvailable) {
       tools.push({
         id: "image",
@@ -187,7 +197,7 @@ export function Composer({
     }));
     const ordered = mention.trigger === "@" ? [...skillItems, ...tools] : [...tools, ...skillItems];
     return ordered.filter((item) => item.label.toLowerCase().includes(query)).slice(0, 8);
-  }, [mention, webSearchAvailable, webSearchEnabled, codeInterpreterAvailable, canvasAvailable, imageGenerationAvailable, imageEditAvailable, skills, selectedSkillIds, tr, onWebSearch, onCodeInterpreter, onCanvas, onCreateImage, onEditImage, onToggleSkill]);
+  }, [mention, webSearchAvailable, webSearchEnabled, codeInterpreterAvailable, canvasAvailable, imageGenerationAvailable, imageEditAvailable, skills, selectedSkillIds, tr, onWebSearch, onCodeInterpreter, onCanvas, onDocument, onCreateImage, onEditImage, onToggleSkill]);
 
   useEffect(() => {
     setMentionIndex(0);
@@ -244,6 +254,18 @@ export function Composer({
     setMenuPos({ top: rect.top - 8, left: Math.max(8, rect.left) });
   }
 
+  function placeMention() {
+    const rect = boxRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const above = rect.top > 220;
+    setMentionPos({
+      top: above ? rect.top - 8 : rect.bottom + 8,
+      left: rect.left,
+      width: rect.width,
+      above,
+    });
+  }
+
   useEffect(() => {
     if (!menuOpen) {
       setSubmenu(null);
@@ -257,6 +279,24 @@ export function Composer({
     onChange();
     media.addEventListener("change", onChange);
     return () => media.removeEventListener("change", onChange);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!mention) return;
+    placeMention();
+    window.addEventListener("resize", placeMention);
+    window.addEventListener("scroll", placeMention, true);
+    return () => {
+      window.removeEventListener("resize", placeMention);
+      window.removeEventListener("scroll", placeMention, true);
+    };
+  }, [mention, value, attachments.length]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setAskIndex((current) => (current + 1) % ASK_PROMPTS.length);
+    }, 30_000);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -412,6 +452,7 @@ export function Composer({
     checked?: boolean;
     disabled?: boolean;
     beta?: boolean;
+    experimental?: boolean;
     onClick: () => void;
   }[] = [
     ...(codeInterpreterAvailable
@@ -465,6 +506,14 @@ export function Composer({
           },
         ]
       : []),
+    {
+      id: "document",
+      label: tr("document"),
+      icon: <FileText size={15} className="text-[var(--muted)]" />,
+      checked: documentOn,
+      experimental: true,
+      onClick: () => onDocument?.(!documentOn),
+    },
     ...(toolPermissionsEnabled
       ? [
           {
@@ -488,7 +537,7 @@ export function Composer({
   return (
     <>
     <div className="composer-pad shrink-0 pb-[var(--safe-bottom)]">
-      <div className="rounded-2xl border border-[var(--border)] bg-[var(--elevated)] px-3 py-2 shadow-[0_8px_30px_rgba(0,0,0,0.22)]">
+      <div ref={boxRef} className="rounded-2xl border border-[var(--border)] bg-[var(--elevated)] px-3 py-2 shadow-[0_8px_30px_rgba(0,0,0,0.22)]">
         {attachments.length ? (
           <div className="flex flex-wrap gap-2 pb-2 pt-1">
             {attachments.map((item) =>
@@ -520,31 +569,6 @@ export function Composer({
             )}
           </div>
         ) : null}
-        {mention ? (
-          <div className="mb-1 max-h-52 overflow-y-auto overscroll-contain rounded-xl border border-[var(--border)] bg-[var(--surface)] py-1">
-            {mentionItems.length ? (
-              mentionItems.map((item, index) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={`flex h-11 w-full items-center gap-2 px-3 text-left text-[14px] ${index === mentionIndex ? "bg-[var(--hover)]" : ""}`}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onMouseEnter={() => setMentionIndex(index)}
-                  onClick={() => applyMention(item)}
-                >
-                  <span className="text-[var(--muted)]">{item.icon}</span>
-                  <span className="flex min-w-0 flex-1 items-center gap-2">
-                    <span className="truncate">{item.label}</span>
-                    {item.id === "canvas" || item.id === "web" ? <span className="shrink-0 rounded-full bg-[var(--elevated)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">{tr("beta")}</span> : null}
-                  </span>
-                  <span className="text-[11px] text-[var(--muted)]">{item.kind === "skill" ? tr("skills") : tr("tools")}</span>
-                </button>
-              ))
-            ) : (
-              <p className="px-3 py-2 text-[13px] text-[var(--muted)]">{tr("mentionEmpty")}</p>
-            )}
-          </div>
-        ) : null}
         <textarea
           ref={ref}
           value={value}
@@ -569,7 +593,7 @@ export function Composer({
             }
           }}
           rows={1}
-          placeholder={createImage ? tr("createImage") : editImage ? tr("editImage") : tr("askAnything")}
+          placeholder={createImage ? tr("createImage") : editImage ? tr("editImage") : tr(ASK_PROMPTS[askIndex])}
           className="max-h-40 min-h-[44px] w-full resize-none bg-transparent px-1 py-2 text-[15px] outline-none placeholder:text-[var(--muted)]"
         />
         {toolError ? <p className="px-1 pb-1 text-[12px] text-[var(--danger)]">{toolError}</p> : null}
@@ -579,7 +603,7 @@ export function Composer({
               ref={plusRef}
               type="button"
               className={`flex h-8 w-8 items-center justify-center rounded-lg ${
-                menuOpen || webSearch || codeInterpreter || canvas || createImage || editImage || attachments.length || toolPermission || selectedSkillIds.length
+                menuOpen || webSearch || codeInterpreter || canvas || documentOn || createImage || editImage || attachments.length || toolPermission || selectedSkillIds.length
                   ? "bg-[var(--accent-soft)] text-[var(--accent)]"
                   : "text-[var(--muted)] hover:bg-[var(--hover)]"
               }`}
@@ -612,6 +636,11 @@ export function Composer({
             {canvas ? (
               <button type="button" className="rounded-md bg-[var(--accent-soft)] px-1.5 py-0.5 text-[11px] text-[var(--accent)]" title={tr("canvasBeta")} onClick={() => onCanvas?.(false)}>
                 {tr("canvas")} · {tr("beta")}
+              </button>
+            ) : null}
+            {documentOn ? (
+              <button type="button" className="rounded-md bg-[var(--accent-soft)] px-1.5 py-0.5 text-[11px] text-[var(--accent)]" onClick={() => onDocument?.(false)}>
+                {tr("document")} · {tr("experimental")}
               </button>
             ) : null}
             {toolPermission === "full" ? (
@@ -651,6 +680,39 @@ export function Composer({
           </div>
         </div>
       </div>
+      {mention
+        ? createPortal(
+            <div
+              className={`motion-fade fixed z-[70] max-h-52 overflow-y-auto overscroll-contain rounded-2xl border border-[var(--border)] bg-[var(--elevated)] py-1 shadow-[0_8px_30px_rgba(0,0,0,0.28)] ${mentionPos.above ? "-translate-y-full" : ""}`}
+              style={{ top: mentionPos.top, left: mentionPos.left, width: mentionPos.width }}
+            >
+              {mentionItems.length ? (
+                mentionItems.map((item, index) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`flex h-11 w-full items-center gap-2 px-3 text-left text-[14px] ${index === mentionIndex ? "bg-[var(--hover)]" : ""}`}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setMentionIndex(index)}
+                    onClick={() => applyMention(item)}
+                  >
+                    <span className="text-[var(--muted)]">{item.icon}</span>
+                    <span className="flex min-w-0 flex-1 items-center gap-2">
+                      <span className="truncate">{item.label}</span>
+                      {item.id === "canvas" || item.id === "web" || item.id === "document" ? (
+                        <span className="shrink-0 rounded-full bg-[var(--surface)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">{item.id === "document" ? tr("experimental") : tr("beta")}</span>
+                      ) : null}
+                    </span>
+                    <span className="text-[11px] text-[var(--muted)]">{item.kind === "skill" ? tr("skills") : tr("tools")}</span>
+                  </button>
+                ))
+              ) : (
+                <p className="px-3 py-2 text-[13px] text-[var(--muted)]">{tr("mentionEmpty")}</p>
+              )}
+            </div>,
+            document.body,
+          )
+        : null}
       <input ref={fileRef} type="file" multiple className="hidden" onChange={(e) => void uploadFiles(e.target.files)} />
       {pageOpen ? (
         <div className="motion-fade fixed inset-0 z-[60] flex items-center justify-center p-4">
@@ -842,7 +904,7 @@ export function Composer({
                               <span className="min-w-0">
                                 <span className="flex items-center gap-2">
                                   <span className="truncate">{row.label}</span>
-                                  {row.beta ? <span className="shrink-0 rounded-full bg-[var(--elevated)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">{tr("beta")}</span> : null}
+                                  {row.beta || row.experimental ? <span className="shrink-0 rounded-full bg-[var(--elevated)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">{row.experimental ? tr("experimental") : tr("beta")}</span> : null}
                                 </span>
                               </span>
                             </span>
@@ -1057,7 +1119,7 @@ export function Composer({
                                 <span className="min-w-0">
                                   <span className="flex items-center gap-2">
                                     <span className="truncate">{row.label}</span>
-                                    {row.beta ? <span className="shrink-0 rounded-full bg-[var(--surface)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">{tr("beta")}</span> : null}
+                                    {row.beta || row.experimental ? <span className="shrink-0 rounded-full bg-[var(--surface)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">{row.experimental ? tr("experimental") : tr("beta")}</span> : null}
                                   </span>
                                 </span>
                               </span>

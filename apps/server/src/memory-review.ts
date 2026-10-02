@@ -1,26 +1,46 @@
 import type { ProviderConnection } from "@wlfv/shared";
 import { completeForConnection } from "./runtime.ts";
-import { saveUserMemories, updateMemory } from "./memory.ts";
+import { saveUserMemories, updateMemory, deleteMemory } from "./memory.ts";
 import {
   fallbackMemoryDrafts,
   isDurableMemory,
   memoriesOverlap,
   parseMemoryOperations,
+  shouldReviewMemory,
   summarizeMemoryFact,
 } from "./memory-ops.ts";
 import { eq } from "drizzle-orm";
 import { memories } from "./db/schema.ts";
 import type { DB } from "./db/index.ts";
 
+function groundedInUser(content: string, userText: string) {
+  const userTokens = new Set(
+    (userText.toLowerCase().match(/[a-z0-9]{3,}/g) || []).filter((token) => token !== "the" && token !== "user"),
+  );
+  if (!userTokens.size) return true;
+  return (content.toLowerCase().match(/[a-z0-9]{3,}/g) || []).some((token) => userTokens.has(token));
+}
+
 function applyOps(
   db: DB,
   userId: string,
   conversationId: string,
   ops: ReturnType<typeof parseMemoryOperations>,
+  userText: string,
 ) {
   const saved: { id: string; content: string; category: string; path: string; memoryType: string }[] = [];
   for (const op of ops) {
-    if (op.action === "remove" || op.action === "move") continue;
+    if (op.action === "remove" && op.id) {
+      if (deleteMemory(db, userId, op.id)) {
+        saved.push({ id: op.id, content: "Removed.", category: "", path: "", memoryType: "" });
+      }
+      continue;
+    }
+    if (op.action === "move" && op.id) {
+      const updated = updateMemory(db, userId, op.id, { path: op.path || "" });
+      if (updated) saved.push(updated);
+      continue;
+    }
     if (op.action === "replace" && op.id && op.content) {
       const current = db.select().from(memories).where(eq(memories.id, op.id)).get();
       const content = summarizeMemoryFact(op.content);
@@ -55,6 +75,7 @@ function applyOps(
     if (op.action === "add" && op.content) {
       const content = summarizeMemoryFact(op.content);
       if (!isDurableMemory(op.content) && !isDurableMemory(content)) continue;
+      if (!groundedInUser(content, userText)) continue;
       saved.push(
         ...saveUserMemories(
           db,
@@ -90,7 +111,8 @@ export async function reviewAndSaveMemories(input: {
   const currentUser = (input.currentUser || "").trim();
   if (!currentUser && !input.transcript.trim()) return [];
   const fallback = fallbackMemoryDrafts(currentUser || input.transcript, input.previousUser);
-  if (!fallback.length && !isDurableMemory(currentUser)) return [];
+  const asked = currentUser || input.transcript;
+  if (!fallback.length && !shouldReviewMemory(asked)) return [];
   let raw = "";
   if (input.conn.url && input.model) {
     const existingText = input.existing.length
@@ -115,20 +137,26 @@ export async function reviewAndSaveMemories(input: {
           },
           {
             role: "user",
-            content: `Write a short third-person summary of each new durable fact. Do not copy the user's message.
-Use action "replace" with an existing id ONLY when that memory is the same data being updated (same city, same job, same GPU, same name). Otherwise use "add". Never replace an unrelated memory.
+            content: `Save durable facts the user states about themselves. Return JSON only. No explanation.
 
-Save only durable facts: type "user" (who they are, job, hardware), "preference" (how to talk, likes), or "context" (other lasting project/setup notes).
-Do not save greetings, questions (including who am I / wie ben ik), plans to talk, acknowledgements, or mood-only remarks. Never delete or remove a memory. If they said "save this", save the previous fact, not the command.
-Keep Geslacht, Leeftijd and Geboortedatum in one memory with path Identiteit only when the user stated those profile fields. Geboortedatum must be a real date of birth such as "1 januari". Never start an unrelated fact with "Geboortedatum:". Do not create a separate memory per field.
-{"operations":[{"action":"add","type":"user","path":"Locatie","content":"De gebruiker woont in Utrecht"}]}
-Empty operations if nothing should change.
+Save: identity, hobbies, interests, skills, work, projects, hardware, software, preferences, location, long-term goals.
+Do not save questions, greetings, guesses, one-off plans, or things the user did not claim as their own.
+"My hobbies are programming and design." saves. "What hobbies should I try?" does not.
+"I like gaming." saves. "Do you think gaming is fun?" does not.
+Keep Name, Age, and Birthday together on path Identity.
+Write content in English, third person. Use the user's own facts, not this example.
 
-Existing memories:
+{"operations":[{"action":"add","category":"preference","path":"Interests","memoryType":"user","content":"The user's hobbies and interests include design, programming, and IT."}]}
+
+Categories: identity, preference, hardware, software, work, project, location, other.
+Paths: Identity, Communication, Interests, Hardware, Software, Work, Projects, Location, Other.
+If nothing should be saved: {"operations":[]}
+
+Existing:
 ${existingText}
 
-Conversation:
-${input.transcript.slice(0, 4000)}`,
+User:
+${asked.slice(0, 2000)}`,
           },
         ],
         signal: input.signal,
@@ -138,7 +166,7 @@ ${input.transcript.slice(0, 4000)}`,
     }
   }
 
-  const fromModel = applyOps(input.db, input.userId, input.conversationId, parseMemoryOperations(raw));
+  const fromModel = applyOps(input.db, input.userId, input.conversationId, parseMemoryOperations(raw), asked);
   if (fromModel.length) return fromModel;
   return applyOps(
     input.db,
@@ -151,5 +179,6 @@ ${input.transcript.slice(0, 4000)}`,
       path: item.path,
       memoryType: item.memoryType,
     })),
+    asked,
   );
 }

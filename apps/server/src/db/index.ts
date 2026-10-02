@@ -5,7 +5,6 @@ import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema.ts";
 import type { Env } from "../env.ts";
-import { DEFAULT_SYSTEM_PROMPT } from "@wlfv/shared";
 import { inferMemoryPath } from "../memory-ops.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -88,6 +87,7 @@ export function openDb(env: Env) {
       archived INTEGER NOT NULL DEFAULT 0,
       pinned INTEGER NOT NULL DEFAULT 0,
       unread INTEGER NOT NULL DEFAULT 0,
+      temporary INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -207,6 +207,9 @@ export function openDb(env: Env) {
   if (!messageCols.some((col) => col.name === "activities")) {
     sqlite.exec("ALTER TABLE messages ADD COLUMN activities TEXT");
   }
+  if (!messageCols.some((col) => col.name === "rating")) {
+    sqlite.exec("ALTER TABLE messages ADD COLUMN rating INTEGER NOT NULL DEFAULT 0");
+  }
   const settingCols = sqlite.prepare("PRAGMA table_info(user_settings)").all() as { name: string }[];
   if (!settingCols.some((col) => col.name === "show_usage")) {
     sqlite.exec("ALTER TABLE user_settings ADD COLUMN show_usage INTEGER NOT NULL DEFAULT 1");
@@ -228,6 +231,9 @@ export function openDb(env: Env) {
   }
   if (!settingCols.some((col) => col.name === "instruction_extra")) {
     sqlite.exec("ALTER TABLE user_settings ADD COLUMN instruction_extra TEXT NOT NULL DEFAULT ''");
+  }
+  if (!settingCols.some((col) => col.name === "load_tools")) {
+    sqlite.exec("ALTER TABLE user_settings ADD COLUMN load_tools INTEGER NOT NULL DEFAULT 0");
   }
   const skillCols = sqlite.prepare("PRAGMA table_info(skills)").all() as { name: string }[];
   if (!skillCols.some((col) => col.name === "default_on")) {
@@ -276,10 +282,19 @@ export function openDb(env: Env) {
   if (!conversationCols.some((col) => col.name === "unread")) {
     sqlite.exec("ALTER TABLE conversations ADD COLUMN unread INTEGER NOT NULL DEFAULT 0");
   }
+  if (!conversationCols.some((col) => col.name === "temporary")) {
+    sqlite.exec("ALTER TABLE conversations ADD COLUMN temporary INTEGER NOT NULL DEFAULT 0");
+  }
   const userCols = sqlite.prepare("PRAGMA table_info(users)").all() as { name: string }[];
   if (!userCols.some((col) => col.name === "display_name")) {
     sqlite.exec("ALTER TABLE users ADD COLUMN display_name TEXT NOT NULL DEFAULT ''");
     sqlite.exec("UPDATE users SET display_name = username WHERE display_name = ''");
+  }
+  if (!userCols.some((col) => col.name === "preferred_name")) {
+    sqlite.exec("ALTER TABLE users ADD COLUMN preferred_name TEXT NOT NULL DEFAULT ''");
+  }
+  if (!userCols.some((col) => col.name === "work")) {
+    sqlite.exec("ALTER TABLE users ADD COLUMN work TEXT NOT NULL DEFAULT ''");
   }
   if (!userCols.some((col) => col.name === "bio")) {
     sqlite.exec("ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''");
@@ -298,8 +313,16 @@ export function openDb(env: Env) {
   }
   const seeded = sqlite.prepare("SELECT key FROM app_settings WHERE key = 'default_system_prompt_v1'").get();
   if (!seeded) {
-    sqlite.prepare("UPDATE user_settings SET system_prompt = ?").run(DEFAULT_SYSTEM_PROMPT);
     sqlite.prepare("INSERT INTO app_settings (key, value, updated_at) VALUES ('default_system_prompt_v1', '1', ?)").run(Date.now());
+  }
+  const cleared = sqlite.prepare("SELECT key FROM app_settings WHERE key = 'default_system_prompt_v2'").get();
+  if (!cleared) {
+    sqlite
+      .prepare(
+        "UPDATE user_settings SET system_prompt = '' WHERE system_prompt LIKE 'WEB SEARCH%' AND instr(system_prompt, 'Voor actuele') > 0",
+      )
+      .run();
+    sqlite.prepare("INSERT INTO app_settings (key, value, updated_at) VALUES ('default_system_prompt_v2', '1', ?)").run(Date.now());
   }
   sqliteHandle = sqlite;
   sqlitePath = file;

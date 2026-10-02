@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, FolderPlus, LogOut, Menu, Pin, Plus, ScrollText, Search, Settings, Sparkles } from "lucide-react";
+import { ChevronDown, ChevronRight, FolderPlus, LogOut, Pin, Plus, ScrollText, Search, Settings, Sparkles, X } from "lucide-react";
 import type { ChatFolder } from "@wlfv/shared";
 import { cn } from "@/lib/cn";
 import { FolderGlyph } from "@/components/sidebar/FolderGlyph";
@@ -152,8 +152,8 @@ export function Sidebar({
         <div className="flex items-center gap-2 px-3 py-4">
           <img src={logoUrl || DEFAULT_LOGO} alt="" className="h-7 w-7 rounded-md object-contain" />
           <span className="text-[14px] font-medium tracking-tight">{branding}</span>
-          <button className="ml-auto md:hidden" onClick={onCloseMobile} aria-label={tr("close")}>
-            <Menu size={16} />
+          <button className="ml-auto rounded-lg p-2 md:hidden" onClick={onCloseMobile} aria-label={tr("closeSidebar")}>
+            <X size={16} />
           </button>
         </div>
         <div className="px-2">

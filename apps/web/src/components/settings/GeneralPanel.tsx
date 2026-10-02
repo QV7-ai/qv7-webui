@@ -3,33 +3,22 @@ import type { ReactNode } from "react";
 import { TOOLS_PROMPT, type GenerationSettings } from "@wlfv/shared";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
-import { applyMotion, applyTheme, fieldLabel, t, type UiLang, GENERATION_FIELDS, clampTextSize, DEFAULT_TEXT_SIZE, TEXT_SIZE_MAX, TEXT_SIZE_MIN, TEXT_SIZE_STEP } from "@/lib/i18n";
+import { Switch } from "@/components/ui/switch";
+import { applyMotion, applyTheme, fieldLabel, t, type UiLang, GENERATION_FIELDS, clampTextSize, TEXT_SIZE_MAX, TEXT_SIZE_MIN, TEXT_SIZE_STEP } from "@/lib/i18n";
 import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar";
 
-function Choice({
-  options,
-  value,
-  onChange,
+function Field({
+  title,
+  children,
 }: {
-  options: { id: string; label: string }[];
-  value: string;
-  onChange: (id: string) => void;
+  title: string;
+  children: ReactNode;
 }) {
   return (
-    <div className="mt-2 flex flex-wrap gap-2">
-      {options.map((option) => (
-        <button
-          key={option.id}
-          type="button"
-          onClick={() => onChange(option.id)}
-          className={`rounded-lg border px-3 py-1.5 text-[13px] ${
-            value === option.id ? "border-[var(--accent)] text-[var(--text)]" : "border-[var(--border)] text-[var(--secondary)]"
-          }`}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
+    <label className="mt-6 block">
+      <span className="block text-[13px] text-[var(--secondary)]">{title}</span>
+      {children}
+    </label>
   );
 }
 
@@ -51,11 +40,14 @@ function ParamRow({
 const inputClass =
   "h-8 w-full rounded-lg bg-[var(--surface)] px-2 text-[12px] text-[var(--text)] outline-none placeholder:text-[var(--muted)]";
 
+const selectClass = "mt-1 h-9 w-full rounded-lg bg-[var(--surface)] px-3 text-[13px] text-[var(--text)] outline-none";
+
 export function GeneralPanel({
   theme,
   language,
   textSize,
   showUsage,
+  loadToolsWhenNeeded,
   animations,
   systemPrompt,
   generation,
@@ -63,6 +55,7 @@ export function GeneralPanel({
   onLanguage,
   onTextSize,
   onShowUsage,
+  onLoadToolsWhenNeeded,
   onAnimations,
   onSystemPrompt,
   onGeneration,
@@ -71,6 +64,7 @@ export function GeneralPanel({
   language: UiLang;
   textSize: number;
   showUsage: boolean;
+  loadToolsWhenNeeded: boolean;
   animations: boolean;
   systemPrompt: string;
   generation: GenerationSettings;
@@ -78,6 +72,7 @@ export function GeneralPanel({
   onLanguage: (language: UiLang) => void;
   onTextSize: (value: number) => void;
   onShowUsage: (value: boolean) => void;
+  onLoadToolsWhenNeeded: (value: boolean) => void;
   onAnimations: (value: boolean) => void;
   onSystemPrompt: (value: string) => void;
   onGeneration: (value: GenerationSettings) => void;
@@ -109,6 +104,7 @@ export function GeneralPanel({
         language,
         textSize,
         showUsage,
+        loadToolsWhenNeeded,
         animations,
         systemPrompt,
         generation: { ...generation, show: false },
@@ -125,87 +121,71 @@ export function GeneralPanel({
   return (
     <div>
       <h2 className="text-[22px] font-medium">{t(lang, "general")}</h2>
-      <p className="mt-6 text-[14px]">{t(lang, "theme")}</p>
-      <Choice
-        value={theme}
-        onChange={(id) => {
-          onTheme(id);
-          applyTheme(id);
-        }}
-        options={[
-          { id: "dark", label: t(lang, "dark") },
-          { id: "oled", label: t(lang, "oled") },
-          { id: "light", label: t(lang, "light") },
-          { id: "system", label: t(lang, "system") },
-        ]}
-      />
-      <p className="mt-6 text-[14px]">{t(lang, "language")}</p>
-      <Choice
-        value={language}
-        onChange={(id) => {
-          const next = id === "nl" ? "nl" : "en";
-          onLanguage(next);
-          document.documentElement.lang = next;
-        }}
-        options={[
-          { id: "en", label: t(lang, "english") },
-          { id: "nl", label: t(lang, "dutch") },
-        ]}
-      />
-      <p className="mt-6 text-[14px]">{t(lang, "textSize")}</p>
-      <div className="mt-2 flex items-center gap-2">
-        <button
-          type="button"
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] text-[16px] hover:bg-[var(--hover)] disabled:opacity-30"
-          aria-label="-"
-          disabled={textSize <= TEXT_SIZE_MIN}
-          onClick={() => onTextSize(clampTextSize(textSize - TEXT_SIZE_STEP))}
-        >
-          −
-        </button>
-        <span className="min-w-12 text-center text-[13px] tabular-nums">{textSize}%</span>
-        <button
-          type="button"
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] text-[16px] hover:bg-[var(--hover)] disabled:opacity-30"
-          aria-label="+"
-          disabled={textSize >= TEXT_SIZE_MAX}
-          onClick={() => onTextSize(clampTextSize(textSize + TEXT_SIZE_STEP))}
-        >
-          +
-        </button>
-        <button
-          type="button"
-          className="rounded-lg px-2.5 py-1.5 text-[12px] text-[var(--secondary)] hover:bg-[var(--hover)] hover:text-[var(--text)] disabled:opacity-30"
-          disabled={textSize === DEFAULT_TEXT_SIZE}
-          onClick={() => onTextSize(DEFAULT_TEXT_SIZE)}
-        >
-          {t(lang, "reset")}
-        </button>
-      </div>
-      <label className="mt-6 flex items-center gap-2 text-[14px]">
-        <input
-          type="checkbox"
-          checked={showUsage}
-          onChange={(e) => {
-            onShowUsage(e.target.checked);
+      <Field title={t(lang, "theme")}>
+        <select
+          className={selectClass}
+          value={theme}
+          onChange={(event) => {
+            onTheme(event.target.value);
+            applyTheme(event.target.value);
           }}
-        />
-        {t(lang, "showUsage")}
+        >
+          <option value="dark">{t(lang, "dark")}</option>
+          <option value="oled">{t(lang, "oled")}</option>
+          <option value="light">{t(lang, "light")}</option>
+          <option value="system">{t(lang, "system")}</option>
+        </select>
+      </Field>
+      <Field title={t(lang, "language")}>
+        <select
+          className={selectClass}
+          value={language}
+          onChange={(event) => {
+            const next = event.target.value === "nl" ? "nl" : "en";
+            onLanguage(next);
+            document.documentElement.lang = next;
+          }}
+        >
+          <option value="en">{t(lang, "english")}</option>
+          <option value="nl">{t(lang, "dutch")}</option>
+        </select>
+      </Field>
+      <Field title={t(lang, "textSize")}>
+        <select className={selectClass} value={textSize} onChange={(event) => onTextSize(clampTextSize(event.target.value))}>
+          {Array.from({ length: (TEXT_SIZE_MAX - TEXT_SIZE_MIN) / TEXT_SIZE_STEP + 1 }, (_, index) => TEXT_SIZE_MIN + index * TEXT_SIZE_STEP).map((size) => (
+            <option key={size} value={size}>
+              {size}%
+            </option>
+          ))}
+        </select>
+      </Field>
+      <label className="mt-6 flex items-start justify-between gap-4 text-[14px]">
+        <span>
+          {t(lang, "showUsage")}
+          <span className="mt-0.5 block text-[12px] text-[var(--muted)]">{t(lang, "showUsageHint")}</span>
+        </span>
+        <Switch checked={showUsage} onChange={onShowUsage} label={t(lang, "showUsage")} />
       </label>
-      <label className="mt-3 flex items-start gap-2 text-[14px]">
-        <input
-          type="checkbox"
-          className="mt-0.5"
-          checked={animations}
-          onChange={(e) => {
-            onAnimations(e.target.checked);
-            applyMotion(e.target.checked);
-          }}
-        />
+      <label className="mt-3 flex items-start justify-between gap-4 text-[14px]">
+        <span>
+          {t(lang, "loadToolsWhenNeeded")}
+          <span className="mt-0.5 block text-[12px] text-[var(--muted)]">{t(lang, "loadToolsWhenNeededHint")}</span>
+        </span>
+        <Switch checked={loadToolsWhenNeeded} onChange={onLoadToolsWhenNeeded} label={t(lang, "loadToolsWhenNeeded")} />
+      </label>
+      <label className="mt-3 flex items-start justify-between gap-4 text-[14px]">
         <span>
           {t(lang, "animations")}
           <span className="mt-0.5 block text-[12px] text-[var(--muted)]">{t(lang, "animationsHint")}</span>
         </span>
+        <Switch
+          checked={animations}
+          label={t(lang, "animations")}
+          onChange={(value) => {
+            onAnimations(value);
+            applyMotion(value);
+          }}
+        />
       </label>
       <label className="mt-8 block text-[14px]">
         {t(lang, "systemPrompt")}

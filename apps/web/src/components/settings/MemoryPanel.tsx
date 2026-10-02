@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Pencil, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { t, type UiLang } from "@/lib/i18n";
 import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar";
@@ -161,15 +162,9 @@ export function MemoryPanel({ language }: { language: UiLang }) {
         <span className="align-middle text-[11px] font-normal text-[var(--muted)]">{t(lang, "experimental")}</span>
       </h2>
       <p className="mt-2 max-w-lg text-[14px] text-[var(--secondary)]">{t(lang, "memoryHint")}</p>
-      <label className="mt-6 flex items-center gap-2 text-[14px]">
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={(e) => {
-            setEnabled(e.target.checked);
-          }}
-        />
-        {t(lang, "memoryEnabled")}
+      <label className="mt-6 flex items-center justify-between gap-4 text-[14px]">
+        <span>{t(lang, "memoryEnabled")}</span>
+        <Switch checked={enabled} onChange={setEnabled} label={t(lang, "memoryEnabled")} />
       </label>
       <SettingsSaveBar
         saving={saving}

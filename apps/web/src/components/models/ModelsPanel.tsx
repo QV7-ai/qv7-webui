@@ -3,6 +3,7 @@ import { GripVertical, MoreHorizontal, Pencil, Search, X } from "lucide-react";
 import { EMPTY_GENERATION, GENERATION_FIELDS, parseGenerationSettings, type GenerationSettings } from "@wlfv/shared";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { ModelIcon } from "@/components/models/ModelIcon";
 import { fieldLabel } from "@/lib/i18n";
 import { useT } from "@/lib/language";
@@ -22,24 +23,6 @@ export type AdminModel = ChatModel & {
   baseModelId?: string;
   generation?: GenerationSettings;
 };
-
-function Switch({ checked, onChange, label }: { checked: boolean; onChange: (value: boolean) => void; label?: string }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={(event) => {
-        event.stopPropagation();
-        onChange(!checked);
-      }}
-      className={`relative h-5 w-9 shrink-0 rounded-full ${checked ? "bg-[var(--accent)]" : "bg-[var(--surface)]"}`}
-    >
-      <span className="absolute top-0.5 h-4 w-4 rounded-full bg-white" style={{ left: checked ? 18 : 2 }} />
-    </button>
-  );
-}
 
 export function ModelsPanel() {
   const tr = useT();
@@ -711,10 +694,11 @@ function ModelEditor({
             categories.map((category) => {
               const checked = categoryIds.includes(category.id);
               return (
-                <label key={category.id} className="flex cursor-pointer items-center gap-2 py-0.5 text-[13px]">
-                  <input
-                    type="checkbox"
+                <label key={category.id} className="flex cursor-pointer items-center justify-between gap-3 py-1 text-[13px]">
+                  <span>{category.name}</span>
+                  <Switch
                     checked={checked}
+                    label={category.name}
                     onChange={() =>
                       setCategoryIds((current) =>
                         current.includes(category.id)
@@ -723,7 +707,6 @@ function ModelEditor({
                       )
                     }
                   />
-                  {category.name}
                 </label>
               );
             })

@@ -73,6 +73,25 @@ function parseJsonCalls(raw: string, calls: ToolCall[]) {
   }
 }
 
+export function questionNeedsSearch(text: string) {
+  const q = text.replace(/\s+/g, " ").trim();
+  if (q.length < 3) return false;
+  if (/\b(search(?:\s+for)?|zoek(?:\s+op)?|google|look\s+up)\b/i.test(q)) return true;
+  if (/\b(today|tonight|yesterday|latest|current|recent|upcoming|breaking|news|weather|forecast|scores?|prices?|stocks?|schedule|right now|this week|this weekend|who won|when is|what time|vandaag|gisteren|laatste|actueel|nieuws|weer|prijs|wanneer|vanavond|deze week)\b/i.test(q)) return true;
+  if (/\b20(2[4-9]|3\d)\b/.test(q)) return true;
+  if (/\b(next|upcoming|latest|volgende)\b.{0,60}\b(match|game|fight|card|event|race|election|release|episode|concert|wedstrijd|gevecht)\b/i.test(q)) return true;
+  if (/\b(match|game|fight|card|wedstrijd|gevecht)\b.{0,60}\b(next|upcoming|latest|volgende|tonight|today|vanavond|vandaag)\b/i.test(q)) return true;
+  return false;
+}
+
+export function questionNeedsCode(text: string) {
+  const q = text.replace(/\s+/g, " ").trim();
+  if (q.length < 3) return false;
+  return /\b(calculate|compute|evaluate this|run (?:this |the )?(?:code|python|javascript|script)|execute (?:this |the )?(?:code|python|script)|python-run|javascript-run|write (?:a |some )?(?:python|javascript) (?:program|script))\b/i.test(
+    q,
+  );
+}
+
 export function parseToolCalls(text: string): ToolCall[] {
   const calls: ToolCall[] = [];
   for (const block of text.matchAll(/```(?:tool|json)\s*\n([\s\S]*?)```/gi)) {
@@ -133,6 +152,9 @@ export function parseToolCalls(text: string): ToolCall[] {
     const name = loose[1];
     const value = loose[2];
     pushCall(calls, name, name === "fetch_url" || name === "memory_read_path" ? { url: value, path: value } : { query: value, content: value });
+  }
+  for (const bare of text.matchAll(/^\s*(?:`{1,3}\s*)?(search_web|fetch_url)(?:\s*`{1,3})?\s*$/gim)) {
+    pushCall(calls, bare[1], {});
   }
   for (const urlCall of text.matchAll(/\bfetch_url\s+(https?:\/\/\S+)/gi)) {
     pushCall(calls, "fetch_url", { url: urlCall[1].replace(/[.,;)]+$/, "") });
@@ -209,7 +231,7 @@ export async function executeToolCall(
   if (call.name === "memory_list_paths") {
     const rows = ctx.db.select().from(memories).where(eq(memories.userId, ctx.userId)).all();
     const groups = listMemoryPathGroups(rows);
-    return { text: groups.length ? JSON.stringify(groups, null, 2) : "No memory paths." };
+    return { text: groups.count ? JSON.stringify(groups, null, 2) : "No memory paths." };
   }
   if (call.name === "memory_read_path") {
     const path = (args.path || args.query || "").trim();
@@ -219,12 +241,17 @@ export async function executeToolCall(
     return {
       text: found.memories.length
         ? JSON.stringify(
-            found.memories.map((row) => ({
-              id: row.id,
-              type: row.memoryType,
-              path: row.path,
-              content: row.content,
-            })),
+            {
+              path: found.path,
+              parents: found.parents,
+              children: found.children,
+              memories: found.memories.map((row) => ({
+                id: row.id,
+                type: row.memoryType,
+                path: row.path,
+                content: row.content,
+              })),
+            },
             null,
             2,
           )

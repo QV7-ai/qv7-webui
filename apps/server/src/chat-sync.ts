@@ -13,8 +13,9 @@ export type SseRaw = ServerResponse & { flush?: () => void };
 export type LiveTurn = {
   userId: string;
   conversationId: string;
-  userMessage: { id: string; content: string };
+  userMessage: { id: string; content: string; createdAt?: number };
   assistantId: string;
+  assistantCreatedAt?: number;
   content: string;
   thinking: string;
   wait?: string;
@@ -84,6 +85,7 @@ export function beginLiveTurn(turn: Omit<LiveTurn, "content" | "thinking"> & { c
     conversationId: live.conversationId,
     userMessage: live.userMessage,
     assistantId: live.assistantId,
+    assistantCreatedAt: live.assistantCreatedAt,
     wait: live.wait,
   };
   broadcast(convoSubs, turn.conversationId, "start", payload);
@@ -167,6 +169,7 @@ export function subscribeConversation(conversationId: string, raw: SseRaw, req: 
       conversationId,
       userMessage: live.userMessage,
       assistantId: live.assistantId,
+      assistantCreatedAt: live.assistantCreatedAt,
       content: live.content,
       thinking: live.thinking,
       wait: live.wait,

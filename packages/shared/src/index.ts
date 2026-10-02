@@ -555,31 +555,7 @@ You may call more than one function. After results return, answer the user.`;
 
 export const TOOLS_PROMPT = toolsPromptFor({ search: true, memory: true });
 
-export const DEFAULT_SYSTEM_PROMPT = `WEB SEARCH
-
-Voor actuele, veranderlijke of brongebonden informatie: gebruik search_web.
-
-search_web geeft zoekresultaten met snippets en URL's. Zoekresultaten zijn niet de volledige inhoud van de gevonden pagina.
-
-VASTE WORKFLOW:
-
-1. Gebruik search_web om relevante bronnen te vinden.
-2. Kies de meest relevante URL uit de zoekresultaten.
-3. Gebruik direct daarna fetch_url op die URL.
-4. Baseer het antwoord op de inhoud van de opgehaalde pagina, niet alleen op de snippet van search_web.
-5. Als fetch_url mislukt of de pagina onvoldoende informatie bevat, gebruik een andere relevante URL uit de zoekresultaten of voer een aanvullende search_web uit.
-6. Stop zodra je voldoende informatie uit de daadwerkelijke bron hebt.
-
-BELANGRIJK:
-
-* Na search_web moet je normaal gesproken altijd fetch_url gebruiken.
-* Vraag de gebruiker nooit eerst of je de gevonden pagina moet openen.
-* Wacht niet tot de gebruiker expliciet om fetch_url vraagt.
-* Gebruik search_web niet als eindpunt wanneer een relevante URL beschikbaar is.
-* Geef bij voorkeur officiële of primaire bronnen voorrang.
-* Gebruik alleen de bronnen die nodig zijn om de vraag betrouwbaar te beantwoorden.
-* Denk niet uitgebreid na tussen search_web en fetch_url.
-* Schrijf nooit Python-, Playwright- of Selenium-scripts om een pagina te openen. fetch_url doet dat al.`;
+export const DEFAULT_SYSTEM_PROMPT = "";
 
 export const INSTRUCTION_TONES = ["default", "professional", "empathetic", "direct"] as const;
 export type InstructionTone = (typeof INSTRUCTION_TONES)[number];
@@ -606,6 +582,81 @@ const TONE_LINES: Record<InstructionTone, { en: string; nl: string }> = {
 
 export function instructionToneLine(tone: InstructionTone, language: "en" | "nl") {
   return TONE_LINES[tone][language];
+}
+
+export const WORK_GROUPS = [
+  { id: "technology", en: "Technology", nl: "Technologie" },
+  { id: "design", en: "Design and media", nl: "Design en media" },
+  { id: "business", en: "Business", nl: "Zakelijk" },
+  { id: "finance", en: "Finance and law", nl: "Financiën en recht" },
+  { id: "science", en: "Science and education", nl: "Wetenschap en onderwijs" },
+  { id: "health", en: "Health", nl: "Zorg" },
+  { id: "public", en: "Public service", nl: "Publieke sector" },
+  { id: "trades", en: "Trades and industry", nl: "Techniek en industrie" },
+  { id: "other", en: "Other work", nl: "Ander werk" },
+] as const;
+
+export const WORK_ROLES = [
+  { id: "software", group: "technology", en: "Software engineer", nl: "Softwareontwikkelaar" },
+  { id: "data", group: "technology", en: "Data scientist", nl: "Datawetenschapper" },
+  { id: "it", group: "technology", en: "IT support", nl: "IT-ondersteuning" },
+  { id: "security", group: "technology", en: "Cybersecurity", nl: "Cybersecurity" },
+  { id: "product", group: "technology", en: "Product manager", nl: "Productmanager" },
+  { id: "designer", group: "design", en: "Designer", nl: "Ontwerper" },
+  { id: "writer", group: "design", en: "Writer", nl: "Schrijver" },
+  { id: "artist", group: "design", en: "Artist", nl: "Kunstenaar" },
+  { id: "photographer", group: "design", en: "Photographer", nl: "Fotograaf" },
+  { id: "filmmaker", group: "design", en: "Filmmaker", nl: "Filmmaker" },
+  { id: "musician", group: "design", en: "Musician", nl: "Muzikant" },
+  { id: "founder", group: "business", en: "Founder", nl: "Oprichter" },
+  { id: "executive", group: "business", en: "Executive", nl: "Directeur" },
+  { id: "consultant", group: "business", en: "Consultant", nl: "Consultant" },
+  { id: "marketing", group: "business", en: "Marketing", nl: "Marketing" },
+  { id: "sales", group: "business", en: "Sales", nl: "Verkoop" },
+  { id: "operations", group: "business", en: "Operations", nl: "Operatie" },
+  { id: "hr", group: "business", en: "Human resources", nl: "Personeelszaken" },
+  { id: "support", group: "business", en: "Customer support", nl: "Klantenservice" },
+  { id: "project", group: "business", en: "Project manager", nl: "Projectmanager" },
+  { id: "accountant", group: "finance", en: "Accountant", nl: "Accountant" },
+  { id: "finance", group: "finance", en: "Financial analyst", nl: "Financieel analist" },
+  { id: "lawyer", group: "finance", en: "Lawyer", nl: "Jurist" },
+  { id: "researcher", group: "science", en: "Researcher", nl: "Onderzoeker" },
+  { id: "scientist", group: "science", en: "Scientist", nl: "Wetenschapper" },
+  { id: "teacher", group: "science", en: "Teacher", nl: "Docent" },
+  { id: "professor", group: "science", en: "Professor", nl: "Hoogleraar" },
+  { id: "student", group: "science", en: "Student", nl: "Student" },
+  { id: "doctor", group: "health", en: "Doctor", nl: "Arts" },
+  { id: "nurse", group: "health", en: "Nurse", nl: "Verpleegkundige" },
+  { id: "therapist", group: "health", en: "Therapist", nl: "Therapeut" },
+  { id: "pharmacist", group: "health", en: "Pharmacist", nl: "Apotheker" },
+  { id: "government", group: "public", en: "Government", nl: "Overheid" },
+  { id: "nonprofit", group: "public", en: "Nonprofit", nl: "Non-profit" },
+  { id: "social", group: "public", en: "Social worker", nl: "Maatschappelijk werker" },
+  { id: "engineer", group: "trades", en: "Engineer", nl: "Ingenieur" },
+  { id: "architect", group: "trades", en: "Architect", nl: "Architect" },
+  { id: "construction", group: "trades", en: "Construction", nl: "Bouw" },
+  { id: "electrician", group: "trades", en: "Electrician", nl: "Elektricien" },
+  { id: "mechanic", group: "trades", en: "Mechanic", nl: "Monteur" },
+  { id: "manufacturing", group: "trades", en: "Manufacturing", nl: "Productie" },
+  { id: "retail", group: "other", en: "Retail", nl: "Detailhandel" },
+  { id: "hospitality", group: "other", en: "Hospitality", nl: "Horeca" },
+  { id: "chef", group: "other", en: "Chef", nl: "Kok" },
+  { id: "farmer", group: "other", en: "Farmer", nl: "Agrariër" },
+  { id: "driver", group: "other", en: "Driver", nl: "Chauffeur" },
+  { id: "realestate", group: "other", en: "Real estate", nl: "Makelaar" },
+  { id: "journalist", group: "other", en: "Journalist", nl: "Journalist" },
+  { id: "other", group: "other", en: "Other", nl: "Anders" },
+] as const;
+
+const WORK_IDS = new Set<string>(WORK_ROLES.map((role) => role.id));
+
+export function parseWorkRole(value: unknown) {
+  const id = String(value || "");
+  return WORK_IDS.has(id) ? id : "";
+}
+
+export function workRoleLabel(id: string) {
+  return WORK_ROLES.find((role) => role.id === id)?.en || "";
 }
 
 export const TOOL_NAME_RE =
@@ -819,6 +870,29 @@ function stripThinkingDraft(text: string) {
   return `${withoutTags.slice(0, marker)}${withoutTags.slice(end)}`;
 }
 
+export function isProgramBlock(code: string) {
+  const body = code.trim();
+  if (!body || body.length > 20000) return false;
+  if (/^(?:user profile\b|the user's |<memory_context>|memory_context\b)/i.test(body)) return false;
+  return /^(?:import |from |def |class |print\(|for |while |if |#|const |let |var |function |console\.|return )/m.test(body) || /[{};]/.test(body);
+}
+
+export function stripLeakedAssistant(text: string, keepCode = false) {
+  let out = String(text || "");
+  const fence = /```(?:python-run|javascript-run|js-run)\s*\n([\s\S]*?)```/gi;
+  out = keepCode
+    ? out.replace(fence, (full, inner: string) => (isProgramBlock(inner) ? full : ""))
+    : out.replace(fence, "");
+  if (!keepCode) {
+    out = out.replace(/```(?:python-run|javascript-run|js-run)[\s\S]*$/gi, "");
+    out = out.replace(/\n*\*\*Code output\*\*\n```[\s\S]*?```/gi, "");
+  }
+  out = out
+    .replace(/<memory_context>[\s\S]*?<\/memory_context>/gi, "")
+    .replace(/(?:^|\n)User profile:\n(?:[ \t]*- .*(?:\n|$))+/gi, "\n");
+  return out.replace(/\n{3,}/g, "\n\n").trim();
+}
+
 export function stripToolMarkup(text: string) {
   text = stripThinkingDraft(text);
   const hasTool = new RegExp(`\\b(?:${TOOL_NAME_RE})\\b`, "i").test(text);
@@ -833,9 +907,11 @@ export function stripToolMarkup(text: string) {
     .replace(/\[(search_web|fetch_url|memory_search|memory_add|memory_update|memory_delete|memory_list|memory_list_paths|memory_read_path|search_memories|add_memory|list_memories)\s*\([\s\S]*?\)\]/gi, "")
     .replace(/\b(?:search_web|fetch_url|memory_search|memory_add|memory_update|memory_delete|memory_list|memory_list_paths|memory_read_path|search_memories|add_memory|list_memories)\s*\([^)]*\)/gi, "")
     .replace(new RegExp(`^\\s*(?:${TOOL_NAME_RE})\\s+("[^"]+"|'[^']+'|https?:\\S+|\\S+)\\s*$`, "gim"), "")
+    .replace(new RegExp(`^\\s*(?:${TOOL_NAME_RE})\\s*$`, "gim"), "")
     .replace(/^call\s+(?:search_web|fetch_url|memory_search|memory_add|memory_update|memory_delete|memory_list|memory_list_paths|memory_read_path|search_memories|add_memory|list_memories)\b.*$/gim, "");
   if (hasTool) {
     out = out.replace(/^(?:first[,']? i(?:['’]ll| will)|to find the answer|let['’]?s use the |now, i will perform).*$/gim, "");
+    out = out.replace(/^.*\b(?:i will wait for the response|searching for)\b.*$/gim, "");
   }
   if (hasBrowserScript) {
     out = out.replace(/this script uses playwright[\s\S]*$/gi, "");

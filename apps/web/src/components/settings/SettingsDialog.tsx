@@ -24,10 +24,10 @@ import { isPhoneViewport, PHONE_QUERY } from "@/lib/layout";
 type Tab = "general" | "usage" | "memory" | "account" | "admin-general" | "branding" | "interface" | "authentication" | "connections" | "users" | "web-search" | "images" | "database" | "admin";
 
 const SETTING_TERMS: Record<Tab, Parameters<typeof t>[1][]> = {
-  general: ["theme", "dark", "light", "oled", "system", "language", "english", "dutch", "textSize", "showUsage", "animations", "systemPrompt", "advanced", "modelParameters"],
+  general: ["theme", "dark", "light", "oled", "system", "language", "english", "dutch", "textSize", "showUsage", "showUsageHint", "loadToolsWhenNeeded", "animations", "systemPrompt", "advanced", "modelParameters"],
   usage: ["tokensLast24h", "tokensLast7d", "lifetimeTokens", "peakTokens", "topModels", "mostUsedTools", "planFree", "planPro"],
   memory: ["memoryEnabled", "addMemory", "importList", "exportList", "clearAll", "memoryPath"],
-  account: ["accountName", "accountUsername", "accountBio", "accountGender", "accountBirthday", "accountEmail", "changePassword", "currentPassword", "newPassword", "signOut"],
+  account: ["accountName", "accountCallName", "accountWork", "accountUsername", "accountBio", "accountGender", "accountBirthday", "accountEmail", "changePassword", "currentPassword", "newPassword", "signOut"],
   "admin-general": ["responseWatermark", "webUiUrl", "sharing", "folders", "memories", "userTools", "canvas", "codeInterpreter", "attachWebpage", "maxFolderCount", "tokenLimits", "freeDayTokens", "proDayTokens"],
   branding: ["websiteName", "description", "accentColor", "customTheme", "themeBg", "themeAccent", "footer", "logo", "favicon", "splashImage"],
   interface: ["tasks", "localTaskModel", "externalTaskModel", "toolPermissions", "titleGeneration"],
@@ -64,7 +64,7 @@ export function SettingsDialog({
   isAdmin: boolean;
   initialTab?: Tab;
   onShowUsageChange?: (value: boolean) => void;
-  onProfileChange?: (user: { username: string; email: string }) => void;
+  onProfileChange?: (user: { username: string; email: string; displayName?: string }) => void;
   onFeaturesChange?: (features: AppFeatures) => void;
   onBrandingChange?: (branding: PublicBranding) => void;
 }) {
@@ -76,6 +76,7 @@ export function SettingsDialog({
   const [language, setLanguage] = useState<UiLang>("en");
   const [textSize, setTextSize] = useState(100);
   const [showUsage, setShowUsage] = useState(true);
+  const [loadToolsWhenNeeded, setLoadToolsWhenNeeded] = useState(false);
   const [animations, setAnimations] = useState(true);
   const [systemPrompt, setSystemPrompt] = useState("");
   const [generation, setGeneration] = useState<GenerationSettings>({ ...EMPTY_GENERATION, values: {}, custom: [] });
@@ -159,6 +160,7 @@ export function SettingsDialog({
       setLanguage(d.language === "nl" ? "nl" : "en");
       setLang(d.language === "nl" ? "nl" : "en");
       setShowUsage(d.showUsage !== false);
+      setLoadToolsWhenNeeded(d.loadToolsWhenNeeded === true);
       setAnimations(d.animations !== false);
       applyMotion(d.animations !== false);
       if (typeof d.textSize === "number") {
@@ -218,6 +220,7 @@ export function SettingsDialog({
           language={language}
           textSize={textSize}
           showUsage={showUsage}
+          loadToolsWhenNeeded={loadToolsWhenNeeded}
           animations={animations}
           systemPrompt={systemPrompt}
           generation={generation}
@@ -234,6 +237,7 @@ export function SettingsDialog({
             setShowUsage(value);
             onShowUsageChange?.(value);
           }}
+          onLoadToolsWhenNeeded={setLoadToolsWhenNeeded}
           onAnimations={setAnimations}
           onSystemPrompt={setSystemPrompt}
           onGeneration={setGeneration}

@@ -46,6 +46,7 @@ export const chatBodySchema = z
     editImage: z.boolean().optional(),
     skillIds: z.array(z.string().min(1).max(80)).max(12).optional(),
     canvas: z.boolean().optional(),
+    document: z.boolean().optional(),
     canvasTitle: z.string().max(80).optional(),
     canvasHtml: z.string().max(80000).optional(),
     attachments: z

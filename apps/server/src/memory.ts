@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { memories } from "./db/schema.ts";
 import type { DB } from "./db/index.ts";
-import { canonicalIdentityField, inferMemoryPath, memoriesOverlap, memoryFactKey, normalizeMemoryPath, normalizeMemoryType, pickMemorySummary, stripFalseBirthdayLabel, summarizeMemoryFact, type MemoryDraft } from "./memory-ops.ts";
+import { canonicalIdentityField, englishMemoryPath, formatIdentityMemory, inferMemoryPath, memoriesOverlap, memoryFactKey, normalizeMemoryPath, normalizeMemoryType, parseIdentityFields, pickMemorySummary, stripFalseBirthdayLabel, summarizeMemoryFact, type MemoryDraft } from "./memory-ops.ts";
 import { rankMemories } from "./memory-context.ts";
 
 export type { MemoryDraft };
@@ -184,7 +184,7 @@ function isIdentityMemory(item: { content: string; path?: string | null }) {
   return (
     memoryFactKey(item.content) === "identity" ||
     Boolean(canonicalIdentityField(item.path || "")) ||
-    /^identiteit$/i.test(String(item.path || ""))
+    /^(identiteit|identity)$/i.test(String(item.path || ""))
   );
 }
 
@@ -199,7 +199,8 @@ export function saveUserMemories(db: DB, userId: string, drafts: MemoryDraft[], 
     const content = stripFalseBirthdayLabel(draft.content);
     const category = draft.category || "other";
     let path = normalizeMemoryPath(draft.path || inferMemoryPath(content, category));
-    if (/^geboortedatum$/i.test(path) && !/^Geboortedatum:/i.test(content)) {
+    path = englishMemoryPath(path);
+    if (/^(birthday|geboortedatum)$/i.test(path) && !/^Birthday:/i.test(content)) {
       path = inferMemoryPath(content, category) || "";
     }
     const memoryType = normalizeMemoryType(draft.memoryType || "user");
@@ -210,7 +211,7 @@ export function saveUserMemories(db: DB, userId: string, drafts: MemoryDraft[], 
         const updated = updateMemory(db, userId, related.id, {
           content: merged,
           category: isIdentityMemory({ content, path }) ? "identity" : category,
-          path: isIdentityMemory({ content, path }) ? "Identiteit" : path || related.path,
+          path: isIdentityMemory({ content, path }) ? "Identity" : englishMemoryPath(path || related.path),
           memoryType,
         });
         existing = existing.map((item) => (item.id === related.id && updated ? { ...item, ...updated, updatedAt: now } : item));
@@ -219,7 +220,7 @@ export function saveUserMemories(db: DB, userId: string, drafts: MemoryDraft[], 
       }
     }
     const stored = stripFalseBirthdayLabel(merge ? summarizeMemoryFact(content) : content);
-    if (/^geboortedatum$/i.test(path) && !/^Geboortedatum:/i.test(stored)) {
+    if (/^(birthday|geboortedatum)$/i.test(path) && !/^Birthday:/i.test(stored)) {
       path = inferMemoryPath(stored, category) || "";
     }
     if (!stored) continue;
@@ -294,8 +295,8 @@ export function updateMemory(
   if (!row || row.userId !== userId) return null;
   const content = stripFalseBirthdayLabel(patch.content ?? row.content);
   const category = (patch.category ?? row.category).trim().slice(0, 40) || row.category;
-  let path = patch.path == null ? row.path : normalizeMemoryPath(patch.path);
-  if (/^geboortedatum$/i.test(path) && !/^Geboortedatum:/i.test(content)) {
+  let path = patch.path == null ? englishMemoryPath(row.path) : englishMemoryPath(patch.path);
+  if (/^(birthday|geboortedatum)$/i.test(path) && !/^Birthday:/i.test(content)) {
     path = inferMemoryPath(content, category) || "";
   }
   const memoryType = patch.memoryType == null ? row.memoryType : normalizeMemoryType(patch.memoryType);
@@ -312,11 +313,14 @@ export function repairFalseBirthdayMemories(db: DB, userId: string) {
   const rows = db.select().from(memories).where(eq(memories.userId, userId)).all();
   const now = Date.now();
   for (const row of rows) {
-    const content = stripFalseBirthdayLabel(row.content);
-    let path = row.path;
-    if (/^geboortedatum$/i.test(path) && !/^Geboortedatum:/i.test(content)) {
+    let content = stripFalseBirthdayLabel(row.content);
+    const identity = parseIdentityFields(content);
+    if (Object.keys(identity).length) content = formatIdentityMemory(identity);
+    let path = englishMemoryPath(row.path);
+    if (/^(birthday|geboortedatum)$/i.test(path) && !/^Birthday:/i.test(content)) {
       path = inferMemoryPath(content, row.category) || "";
     }
+    if (Object.keys(identity).length) path = "Identity";
     if (content === row.content && path === row.path) continue;
     db.update(memories).set({ content, path, updatedAt: now }).where(eq(memories.id, row.id)).run();
     row.content = content;

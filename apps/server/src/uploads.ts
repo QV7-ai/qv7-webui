@@ -28,6 +28,10 @@ export function isStoredIconName(name: string) {
   return /^[a-f0-9-]+\.(png|jpg|jpeg|webp|gif|svg|ico)$/i.test(name);
 }
 
+export function isStoredDocumentName(name: string) {
+  return /^[a-f0-9-]+\.(md|txt|csv|html|docx)$/i.test(name);
+}
+
 export function isStoredImageName(name: string) {
   return /^[a-f0-9-]+\.(png|jpg|jpeg|webp|gif)$/i.test(name);
 }
@@ -99,13 +103,18 @@ function mimeForIcon(file: string) {
   if (file.endsWith(".gif")) return "image/gif";
   if (file.endsWith(".svg")) return "image/svg+xml";
   if (file.endsWith(".ico")) return "image/x-icon";
+  if (file.endsWith(".md")) return "text/markdown; charset=utf-8";
+  if (file.endsWith(".txt")) return "text/plain; charset=utf-8";
+  if (file.endsWith(".csv")) return "text/csv; charset=utf-8";
+  if (file.endsWith(".html")) return "text/html; charset=utf-8";
+  if (file.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   return "application/octet-stream";
 }
 
 export function registerUploads(app: FastifyInstance, uploadsDir: string) {
   app.get("/api/uploads/:file", async (req, reply) => {
     const file = path.basename((req.params as { file: string }).file);
-    if (!isStoredIconName(file)) return reply.code(404).send({ error: "Not found." });
+    if (!isStoredIconName(file) && !isStoredDocumentName(file)) return reply.code(404).send({ error: "Not found." });
     const root = path.resolve(uploadsDir);
     const abs = path.resolve(root, file);
     const relative = path.relative(root, abs);
@@ -113,6 +122,7 @@ export function registerUploads(app: FastifyInstance, uploadsDir: string) {
       return reply.code(404).send({ error: "Not found." });
     }
     if (!fs.existsSync(abs)) return reply.code(404).send({ error: "Not found." });
+    if (isStoredDocumentName(file)) reply.header("Content-Disposition", "attachment");
     reply.header("Cache-Control", "public, max-age=31536000, immutable");
     return reply.type(mimeForIcon(file)).send(fs.createReadStream(abs));
   });

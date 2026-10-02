@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { isProgramBlock } from "@wlfv/shared";
 
 const BLOCK = /```(python-run|javascript-run|js-run)\s*\n([\s\S]*?)```/gi;
 
@@ -11,7 +12,7 @@ export function extractRunnableBlocks(text: string) {
   for (const match of text.matchAll(BLOCK)) {
     const tag = match[1].toLowerCase();
     const code = match[2].trim();
-    if (!code) continue;
+    if (!code || !isProgramBlock(code)) continue;
     blocks.push({ language: tag.startsWith("python") ? "python" : "javascript", code });
   }
   return blocks.slice(0, 3);

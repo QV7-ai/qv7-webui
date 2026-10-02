@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { conversations, folders, messages, modelConfigs, skills, userSettings, users } from "./db/schema.ts";
 import type { DB } from "./db/index.ts";
@@ -8,7 +8,7 @@ import { chatBodySchema } from "./env.ts";
 import { thinkParam } from "./services/ollama/index.ts";
 import { parseShowCapabilities } from "./services/ollama/capabilities.ts";
 import { publicErrorMessage, OllamaError } from "./services/ollama/errors.ts";
-import { usageFromOllama, type UsageStats, type WebSearchSource, type ChatActivity, DEFAULT_SYSTEM_PROMPT, toolsPromptFor, stripToolMarkup, parseGenerationSettings, parseInstructionTone, instructionToneLine, CANVAS_PROMPT, CANVAS_DESIGN, TASK_MODEL_CURRENT, type ConnectionsConfig, type ProviderConnection } from "@wlfv/shared";
+import { usageFromOllama, type UsageStats, type WebSearchSource, type ChatActivity, DEFAULT_SYSTEM_PROMPT, toolsPromptFor, stripToolMarkup, stripLeakedAssistant, parseGenerationSettings, parseInstructionTone, instructionToneLine, workRoleLabel, CANVAS_PROMPT, CANVAS_DESIGN, TASK_MODEL_CURRENT, type ConnectionsConfig, type ProviderConnection } from "@wlfv/shared";
 import { resolveModelConnection, resolveOllamaModel } from "./models.ts";
 import { loadWebSearch, runWebSearch } from "./web-search/index.ts";
 import { handleImageTurn, imagesEnabledFor } from "./images/turn.ts";
@@ -22,9 +22,11 @@ import type { Env } from "./env.ts";
 import { extractRunnableBlocks, runCodeBlocks } from "./code-interpreter.ts";
 import { repairFalseBirthdayMemories } from "./memory.ts";
 import { reviewAndSaveMemories } from "./memory-review.ts";
-import { fallbackMemoryDrafts } from "./memory-ops.ts";
+import { fallbackMemoryDrafts, shouldReviewMemory } from "./memory-ops.ts";
 import { buildMemoryContext, MEMORY_REVIEW_INTERVAL_TURNS } from "./memory-context.ts";
-import { executeToolCall, parseToolCalls } from "./tools.ts";
+import { materializeDocument, preferredDocumentExt } from "./documents.ts";
+import { bioAsUserFact, correctIdentityVoice, directIdentityReply } from "./identity.ts";
+import { executeToolCall, parseToolCalls, questionNeedsCode, questionNeedsSearch } from "./tools.ts";
 import { recordToolRun, recordMessageUsage, assertTokenQuota } from "./usage.ts";
 import {
   beginLiveTurn,
@@ -199,6 +201,33 @@ function splitPromptTokens(total: number, weights: { system: number; skills: num
   return { system, skills, tools, conversation: Math.max(0, input - system - skills - tools) };
 }
 
+function feedbackGuidance(db: DB, userId: string) {
+  const rows = db
+    .select({ content: messages.content, rating: messages.rating })
+    .from(messages)
+    .innerJoin(conversations, eq(messages.conversationId, conversations.id))
+    .where(and(eq(conversations.userId, userId), eq(messages.role, "assistant"), ne(messages.rating, 0)))
+    .orderBy(desc(messages.updatedAt))
+    .limit(8)
+    .all();
+  const clip = (text: string) => {
+    const clean = stripToolMarkup(text).replace(/\s+/g, " ").trim();
+    if (!clean) return "";
+    return clean.length <= 180 ? clean : `${clean.slice(0, 177).trimEnd()}…`;
+  };
+  const liked = rows.filter((row) => row.rating === 1).map((row) => clip(row.content)).filter(Boolean).slice(0, 4);
+  const disliked = rows.filter((row) => row.rating === -1).map((row) => clip(row.content)).filter(Boolean).slice(0, 4);
+  if (!liked.length && !disliked.length) return "";
+  return [
+    "The user rates your replies so you can improve.",
+    liked.length ? `Replies they liked:\n${liked.map((line) => `- ${line}`).join("\n")}` : "",
+    disliked.length ? `Replies they disliked:\n${disliked.map((line) => `- ${line}`).join("\n")}` : "",
+    "Match the style of liked replies. Avoid the pattern of disliked replies.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 function activityNote(raw: string) {
   const text = stripToolMarkup(raw).replace(/\s+/g, " ").trim();
   if (text.length < 12) return "";
@@ -215,7 +244,7 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
     let rows = db
       .select()
       .from(conversations)
-      .where(eq(conversations.userId, user.id))
+      .where(and(eq(conversations.userId, user.id), eq(conversations.temporary, 0)))
       .orderBy(desc(conversations.updatedAt))
       .all();
     if (q) {
@@ -240,7 +269,8 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
   app.post("/api/conversations", async (req, reply) => {
     const user = await requireUser(req, reply, db);
     if (!user) return;
-    const body = req.body as { modelId?: string; folderId?: string | null };
+    const body = req.body as { modelId?: string; folderId?: string | null; temporary?: boolean };
+    const temporary = Boolean(body.temporary);
     let folderId: string | null = null;
     if (body.folderId) {
       if (!loadAppGeneral(db).foldersEnabled) return reply.code(403).send({ error: "Folders are disabled." });
@@ -260,17 +290,18 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
         userId: user.id,
         title: "New chat",
         modelId: body.modelId ?? null,
-        folderId,
+        folderId: temporary ? null : folderId,
         thinkingEnabled: 0,
         archived: 0,
         pinned: 0,
         unread: 0,
+        temporary: temporary ? 1 : 0,
         createdAt: now,
         updatedAt: now,
       })
       .run();
-    notifyChats(user.id, { conversationId: id });
-    return { conversation: { id, title: "New chat", modelId: body.modelId ?? null, folderId, createdAt: now, updatedAt: now } };
+    if (!temporary) notifyChats(user.id, { conversationId: id });
+    return { conversation: { id, title: "New chat", modelId: body.modelId ?? null, folderId: temporary ? null : folderId, temporary, createdAt: now, updatedAt: now } };
   });
 
   app.get("/api/conversations/:id", async (req, reply) => {
@@ -297,6 +328,7 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
         folderId: convo.folderId,
         thinkingEnabled: Boolean(convo.thinkingEnabled),
         thinkingLevel: convo.thinkingLevel,
+        temporary: Boolean(convo.temporary),
         createdAt: convo.createdAt,
         updatedAt: convo.updatedAt,
         messages: overlayLiveMessages(
@@ -334,12 +366,30 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
                   return undefined;
                 }
               })(),
+              rating: m.rating || 0,
               createdAt: m.createdAt,
             };
           }),
         ),
       },
     };
+  });
+
+  app.post("/api/messages/:id/feedback", async (req, reply) => {
+    const user = await requireUser(req, reply, db);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const body = req.body as { rating?: number };
+    const rating = body.rating === 1 || body.rating === -1 ? body.rating : 0;
+    const row = db
+      .select({ id: messages.id, role: messages.role })
+      .from(messages)
+      .innerJoin(conversations, eq(messages.conversationId, conversations.id))
+      .where(and(eq(messages.id, id), eq(conversations.userId, user.id)))
+      .get();
+    if (!row || row.role !== "assistant") return reply.code(404).send({ error: "Message not found." });
+    db.update(messages).set({ rating, updatedAt: Date.now() }).where(eq(messages.id, id)).run();
+    return { rating };
   });
 
   app.patch("/api/conversations/:id", async (req, reply) => {
@@ -416,6 +466,7 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
         archived: 0,
         pinned: 0,
         unread: 0,
+        temporary: 0,
         createdAt: now,
         updatedAt: now,
       })
@@ -501,7 +552,7 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
     if (!quota.ok) return reply.code(429).send({ error: quota.message, code: quota.code });
     const parsed = chatBodySchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "The request was invalid." });
-    const { conversationId, message, modelId, thinking, webSearch, codeInterpreter, attachments, createImage, editImage, skillIds, canvas, canvasTitle, canvasHtml } =
+    const { conversationId, message, modelId, thinking, webSearch, codeInterpreter, attachments, createImage, editImage, skillIds, canvas, canvasTitle, canvasHtml, document: documentMode } =
       parsed.data;
     const imageMode = editImage ? "edit" : createImage ? "create" : null;
     if (imageMode && !imagesEnabledFor(db, imageMode)) {
@@ -634,7 +685,7 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
     }
     generation.values = { ...generation.values, ...modelGeneration.values };
     generation.custom = [...generation.custom, ...modelGeneration.custom];
-    const memoryOn = loadAppGeneral(db).memoriesEnabled && settings?.memoryEnabled !== 0;
+    const memoryOn = !convo.temporary && loadAppGeneral(db).memoriesEnabled && settings?.memoryEnabled !== 0;
     const history = db
       .select()
       .from(messages)
@@ -689,8 +740,9 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
     beginLiveTurn({
       userId: user.id,
       conversationId,
-      userMessage: { id: userMsgId, content: storedUser },
+      userMessage: { id: userMsgId, content: storedUser, createdAt: now },
       assistantId,
+      assistantCreatedAt,
       wait: initialWait,
     });
 
@@ -712,43 +764,25 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
     aborts.get(key)?.abort();
     aborts.set(key, controller);
     req.raw.on("close", () => controller.abort());
-    const notifyMemory = (facts: { content: string }[]) => {
-      if (!facts.length) return;
-      emit( "memory", { saved: facts.map((item) => item.content) });
-    };
     const userTurnCount = history.filter((item) => item.role === "user").length;
-    const memoryReview = memoryOn
+    const explicitMemory = memoryOn
       ? (async () => {
-          const explicit = fallbackMemoryDrafts(storedUser, previousUser ? String(previousUser) : undefined);
-          const due = userTurnCount > 0 && userTurnCount % MEMORY_REVIEW_INTERVAL_TURNS === 0;
-          if (!explicit.length && !due) return [];
-          const task = resolveTaskModel(db, env, connections, model, conn);
-          const abort = new AbortController();
-          const timer = setTimeout(() => abort.abort(), 12000);
-          try {
-            return await reviewAndSaveMemories({
-              db,
-              userId: user.id,
-              conversationId,
-              conn: task.taskConn,
-              model: due ? task.remote || "" : "",
-              existing: mems,
-              transcript: [
-                previousUser ? `USER (earlier): ${String(previousUser).slice(0, 1500)}` : "",
-                `USER: ${storedUser.slice(0, 2000)}`,
-              ]
-                .filter(Boolean)
-                .join("\n\n"),
-              currentUser: storedUser,
-              previousUser: previousUser ? String(previousUser) : undefined,
-              signal: abort.signal,
-            });
-          } finally {
-            clearTimeout(timer);
-          }
+          const drafts = fallbackMemoryDrafts(storedUser, previousUser ? String(previousUser) : undefined);
+          if (!drafts.length) return [];
+          return await reviewAndSaveMemories({
+            db,
+            userId: user.id,
+            conversationId,
+            conn,
+            model: "",
+            existing: mems,
+            transcript: storedUser.slice(0, 2000),
+            currentUser: storedUser,
+            previousUser: previousUser ? String(previousUser) : undefined,
+          });
         })()
       : Promise.resolve([]);
-    void memoryReview.then(notifyMemory).catch(() => {});
+    const memoryDue = memoryOn && userTurnCount > 0 && userTurnCount % MEMORY_REVIEW_INTERVAL_TURNS === 0;
 
     let content = "";
     let thinkingText = "";
@@ -766,12 +800,22 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
     };
     try {
       let searchContext = "";
-      if (webSearch && searchConfig.enabled) {
+      const loadTools = settings?.loadToolsWhenNeeded === 1;
+      const searchAllowed = searchConfig.enabled && (user.role === "admin" || toolAccess.toolWebSearch);
+      const codeAllowed = user.role === "admin" || toolAccess.toolCode;
+      const currentAsk = (message.trim() || storedUser).replace(/\s+/g, " ").trim();
+      const earlierAsk = String(previousUser || "").replace(/\s+/g, " ").trim();
+      const refersBack = Boolean(earlierAsk) && /\b(this|that|it|same|deze|dat|dit)\b/i.test(currentAsk);
+      const recentUser = history
+        .filter((item) => item.role === "user")
+        .slice(-3)
+        .map((item) => String(item.content || "").replace(/\s+/g, " ").trim())
+        .filter(Boolean)
+        .join("\n");
+      const asked = refersBack ? `${recentUser}\n${currentAsk}` : currentAsk;
+      const autoSearch = loadTools && searchAllowed && questionNeedsSearch(refersBack ? `${currentAsk}\n${recentUser}` : currentAsk);
+      if ((webSearch && searchConfig.enabled) || autoSearch) {
         emitWait("searching");
-        const currentAsk = (message.trim() || storedUser).replace(/\s+/g, " ").trim();
-        const earlierAsk = String(previousUser || "").replace(/\s+/g, " ").trim();
-        const refersBack = Boolean(earlierAsk) && /\b(this|that|it|same|deze|dat|dit)\b/i.test(currentAsk);
-        const asked = refersBack ? earlierAsk : currentAsk;
         const query = await summarizeSearchQuery(db, env, connections, model, conn, asked, controller.signal);
         const step: ChatActivity = { kind: "search", query, sources: [] };
         activities.push(step);
@@ -796,12 +840,18 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
       const brandName = loadBranding(db).name || env.appName || "QV7";
       const account = db.select().from(users).where(eq(users.id, user.id)).get();
       const userName = (account?.displayName || account?.username || user.username || "").trim();
+      const callName = (account?.preferredName || "").trim();
+      const spokenName = callName || userName;
+      const assistantName = (model.kind === "custom" ? model.displayName : brandName).trim() || "the assistant";
+      const work = workRoleLabel(account?.work || "");
       const profileLines = [
-        userName ? `Name: ${userName}` : "",
-        account?.username ? `Username: ${account.username}` : "",
-        account?.gender ? `Gender: ${account.gender}` : "",
-        account?.birthday ? `Birthday: ${account.birthday}` : "",
-        account?.bio ? `Bio: ${account.bio}` : "",
+        spokenName ? `The user's name is ${spokenName}. That name belongs to the user, not to you.` : "",
+        userName && spokenName && userName !== spokenName ? `The user's profile name is ${userName}.` : "",
+        work ? `The user works as a ${work}. That job belongs to the user, not to you.` : "",
+        account?.username ? `The user's username is ${account.username}.` : "",
+        account?.gender ? `The user's gender is ${account.gender}.` : "",
+        account?.birthday ? `The user's birthday is ${account.birthday}.` : "",
+        account?.bio ? `About the user, not about you: ${bioAsUserFact(account.bio)}` : "",
       ].filter(Boolean);
       const memoryQuery = history
         .filter((item) => item.role === "user")
@@ -811,11 +861,18 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
         .join("\n\n")
         .slice(-4000);
       const memoryContext = memoryOn ? buildMemoryContext(mems, memoryQuery || storedUser) : "";
-      const toolPrompt = userPrompt.includes("```tool") ? "" : toolsPromptFor({ search: webSearch, memory: memoryOn });
+      const offerSearch = Boolean(webSearch) || (loadTools && searchAllowed);
+      const offerCode = Boolean(codeInterpreter) || (loadTools && codeAllowed && questionNeedsCode(currentAsk));
+      const toolPrompt = userPrompt.includes("```tool") ? "" : toolsPromptFor({ search: offerSearch, memory: false });
       const system = [
         persona || (model.kind === "custom" ? `You are ${model.displayName}, a helpful, precise assistant.` : `You are ${brandName}, a helpful, precise assistant.`),
-        `You are the assistant. The human is the user${userName ? ` (${userName})` : ""}. Never say the user is an AI or that they are ${brandName}.`,
-        "Reply in the user's language with a normal assistant message. Do not output XML, python tool scripts, Playwright, Selenium, or tool-call syntax unless a real tool block is required. Never invent search results. If the user asks to open a page with Playwright or fetch, call fetch_url.",
+        spokenName
+          ? `You are ${assistantName}, the assistant. The human you are talking to is ${spokenName}. When a name fits, call them ${spokenName}. Do not use the name in every sentence. Never introduce yourself as ${spokenName}. Never say "I am ${spokenName}".`
+          : `You are the assistant. The human is the user. Never say the user is an AI or that they are ${assistantName}.`,
+        work
+          ? `${spokenName || "The user"} is the ${work}. You are not a ${work}. If they ask about their job, describe their work in the second person ("you"). Do not say "I am a ${work}".`
+          : "",
+        "Reply in the user's language with a normal assistant message. Do not repeat private notes, tool instructions, or code fences unless the user asked for code.",
         thinking?.enabled
           ? "Thinking is shown in a separate panel. Put reasoning only inside <think> and </think>. Do not write a Thinking Process section in the answer. After </think>, write only the answer. Call tools with a ```tool fence, never a <tool_code> tag."
           : "Do not output chain-of-thought.",
@@ -835,22 +892,31 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
               .filter(Boolean)
               .join("\n\n")
           : "Canvas is off. Do not output a complete HTML document, a ```html page, or a canvas file. If a skill asks for an HTML report or a canvas, answer in normal chat markdown instead.",
+        documentMode
+          ? `Document is on. After one short sentence, output exactly one fenced file:\n\n\`\`\`document\nfilename: Title.${preferredDocumentExt(message)}\n\nThe full document.\n\`\`\`\n\nWrite the whole document inside the fence. Use Markdown headings and paragraphs. Do not say you cannot create files.`
+          : "",
         profileLines.length ? `User profile:\n${profileLines.map((line) => `- ${line}`).join("\n")}` : "",
         memoryContext
           ? `${memoryContext}\n\nUse <memory_context> only when it helps. It is private notes about the user, not about you. Do not paste the whole list. Do not speak in the user's first person.`
           : "",
+        feedbackGuidance(db, user.id),
         memoryOn
-          ? "You have persistent memory. Call memory_add for new durable facts, memory_search to look up more, and memory_update to correct an existing id. When they ask you to remember something, save it and confirm."
+          ? "Notes about the user are private context. Use them to answer. Do not recite them, and do not write a profile, a tool call, or a program unless the user asked for that."
           : "",
         searchContext
           ? `Web search results (cite with markdown links when used):\n${searchContext}`
           : "",
         webSearch
           ? "Web search is on. Playwright/fetch in the user message means fetch_url. Do not write scraping scripts."
-          : "",
+          : offerSearch && !userPrompt.includes("search_web")
+            ? "Call search_web only when the question needs current, local, or source-backed facts you do not already know. Then call fetch_url on the most relevant result. Skip search for general knowledge."
+            : "",
         attached ? `User-provided attachments. Use them as source material:\n${attached}` : "",
-        codeInterpreter
-          ? "Code interpreter is enabled. When you need to execute code, output a fenced block tagged python-run or javascript-run containing only the program. Do not invent stdout; it will be executed and returned to you."
+        offerCode
+          ? "Code interpreter is available. When a calculation, data transform, or program is required, output a fenced block tagged python-run or javascript-run containing only the program. Do not invent stdout; it will be executed and returned to you."
+          : "",
+        spokenName
+          ? `Reminder: you are ${assistantName}. ${spokenName} is the user${work ? ` and works as a ${work}` : ""}. Speak to ${spokenName}. Do not speak as ${spokenName}${work ? ` or as a ${work}` : ""}.`
           : "",
       ]
         .filter(Boolean)
@@ -862,7 +928,11 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
         .slice(-22);
       const historyMessages: ProviderMessage[] = [
         { role: "system", content: system },
-        ...prior.map((m) => providerMessage(m.role, m.content, uploadsDir)),
+        ...prior.map((m) => {
+          const msg = providerMessage(m.role, m.content, uploadsDir);
+          if (m.role === "assistant" && msg.content) msg.content = correctIdentityVoice(msg.content, spokenName, work);
+          return msg;
+        }),
         providerMessage("user", storedUser, uploadsDir),
       ];
       function weighPrompt(messages: ProviderMessage[]) {
@@ -888,6 +958,50 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
       }
 
       let insideThink = false;
+      let heldFence = "";
+      function releaseVisible(delta: string) {
+        if (offerCode) return delta;
+        heldFence += delta;
+        let visible = "";
+        while (heldFence) {
+          const open = heldFence.indexOf("```");
+          if (open < 0) {
+            visible += heldFence;
+            heldFence = "";
+            break;
+          }
+          visible += heldFence.slice(0, open);
+          const rest = heldFence.slice(open);
+          const headerEnd = rest.indexOf("\n");
+          if (headerEnd < 0) {
+            heldFence = rest;
+            break;
+          }
+          const header = rest.slice(3, headerEnd).trim().toLowerCase();
+          if (header === "python-run" || header === "javascript-run" || header === "js-run") {
+            const close = rest.indexOf("```", headerEnd + 1);
+            if (close < 0) {
+              heldFence = rest;
+              break;
+            }
+            heldFence = rest.slice(close + 3);
+            continue;
+          }
+          visible += "```";
+          heldFence = rest.slice(3);
+        }
+        return visible;
+      }
+      function flushHeldFence() {
+        if (!heldFence) return "";
+        if (/^```(?:python-run|javascript-run|js-run)/i.test(heldFence)) {
+          heldFence = "";
+          return "";
+        }
+        const rest = heldFence;
+        heldFence = "";
+        return rest;
+      }
       function splitThink(delta: string) {
         let think = "";
         let visible = "";
@@ -947,8 +1061,11 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
               emit("thinking", { delta: parts.think });
             }
             if (parts.visible) {
-              content += parts.visible;
-              emit("content", { delta: parts.visible });
+              const visible = releaseVisible(parts.visible);
+              if (visible) {
+                content += visible;
+                emit("content", { delta: visible });
+              }
             }
           } else if (event.type === "error") {
             status = "error";
@@ -957,16 +1074,27 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
             usage = usageFromOllama(event.stats);
           }
         }
+        const tail = flushHeldFence();
+        if (tail) {
+          content += tail;
+          emit("content", { delta: tail });
+        }
       }
 
-      await consume(historyMessages);
+      const canned = directIdentityReply(message, spokenName, work);
+      if (canned) {
+        content = canned;
+        emit("content", { delta: content });
+      } else {
+        await consume(historyMessages);
+      }
 
       const toolCtx = {
         db,
         userId: user.id,
         conversationId,
         memoryOn,
-        searchEnabled: searchConfig.enabled,
+        searchEnabled: offerSearch,
         searchConfig,
         signal: controller.signal,
         previousUser,
@@ -975,6 +1103,9 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
       function publishContent(next: string) {
         content = next;
         emit( "content", { reset: true, delta: content });
+      }
+      function showReply(text: string) {
+        publishContent(stripLeakedAssistant(stripToolMarkup(text), offerCode));
       }
 
       function toolWaitStage(name: string) {
@@ -1019,7 +1150,7 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
           emitWait(toolWaitStage(call.name));
           if (call.name === "search_web") {
             const focused = focusSearchText(String(call.arguments.query || call.arguments.q || ""));
-            if (focused) call.arguments.query = focused;
+            call.arguments.query = focused || focusSearchText(storedUser) || currentAsk.slice(0, 180);
           }
           const searchQuery = (call.arguments.query || call.arguments.q || "").trim();
           const searchStep: Extract<ChatActivity, { kind: "search" }> | null =
@@ -1053,7 +1184,7 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
           }
         }
         const resultText = results.join("\n\n");
-        publishContent(stripToolMarkup(content));
+        showReply(content);
         await consume([
           ...historyMessages,
           { role: "assistant", content: content || "(called tools)" },
@@ -1063,7 +1194,7 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
           },
         ]);
       }
-      publishContent(stripToolMarkup(content));
+      showReply(content);
       if (status === "complete" && !controller.signal.aborted && !content.trim()) {
         await consume([
           ...historyMessages,
@@ -1072,10 +1203,10 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
             content: "Reply now to the latest user message in their language. Output only the assistant reply. No tools, XML, or chain-of-thought.",
           },
         ]);
-        publishContent(stripToolMarkup(content));
+        showReply(content);
       }
 
-      if (codeInterpreter && status === "complete" && !controller.signal.aborted && extractRunnableBlocks(content).length) {
+      if (offerCode && status === "complete" && !controller.signal.aborted && extractRunnableBlocks(content).length) {
         emitWait("running");
         const output = await runCodeBlocks(content);
         if (output) {
@@ -1090,12 +1221,31 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
           ]);
         }
       }
+      showReply(content);
       if (controller.signal.aborted) status = "interrupted";
       if (status === "complete" && !content.trim()) {
         status = "error";
         emit( "error", {
           message: "The model returned no text. Check the API URL, key, and that the model ID is accepted by the provider.",
         });
+      }
+      if (status === "complete" && content.trim()) {
+        const fixed = correctIdentityVoice(content, spokenName, work);
+        if (fixed !== content) {
+          content = fixed;
+          emit("content", { reset: true, delta: content });
+        }
+      }
+      if (status === "complete" && documentMode && content.trim()) {
+        try {
+          const saved = await materializeDocument(uploadsDir, content, message);
+          if (saved) {
+            content = saved.content;
+            emit("content", { reset: true, delta: content });
+          }
+        } catch {
+          /* keep the reply if the file cannot be written */
+        }
       }
       if (status === "complete") {
         const watermark = loadAppGeneral(db).responseWatermark.trim();
@@ -1121,11 +1271,6 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
         usage.context = splitPromptTokens(usage.inputTokens, contextWeights);
       }
       aborts.delete(key);
-      try {
-        notifyMemory(await memoryReview);
-      } catch {
-        /* memory review is best-effort */
-      }
       db.update(messages)
         .set({
           content,
@@ -1197,6 +1342,38 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
       else emit("done", { messageId: assistantId, usage, error: true });
       endLiveTurn(conversationId);
       reply.raw.end();
+      try {
+        await explicitMemory;
+        if ((memoryDue || shouldReviewMemory(storedUser)) && status === "complete" && !controller.signal.aborted) {
+          const task = resolveTaskModel(db, env, connections, model, conn);
+          const abort = new AbortController();
+          const timer = setTimeout(() => abort.abort(), 12000);
+          try {
+            await reviewAndSaveMemories({
+              db,
+              userId: user.id,
+              conversationId,
+              conn: task.taskConn,
+              model: task.remote || "",
+              existing: mems,
+              transcript: [
+                previousUser ? `user: ${String(previousUser).slice(0, 1200)}` : "",
+                `user: ${storedUser.slice(0, 1600)}`,
+                `assistant_final: ${content.slice(0, 1600)}`,
+              ]
+                .filter(Boolean)
+                .join("\n\n"),
+              currentUser: storedUser,
+              previousUser: previousUser ? String(previousUser) : undefined,
+              signal: abort.signal,
+            });
+          } finally {
+            clearTimeout(timer);
+          }
+        }
+      } catch {
+        /* memory review is best-effort */
+      }
     }
   });
 }

@@ -5,6 +5,8 @@ export const users = sqliteTable("users", {
   email: text("email").notNull().unique(),
   username: text("username").notNull(),
   displayName: text("display_name").notNull().default(""),
+  preferredName: text("preferred_name").notNull().default(""),
+  work: text("work").notNull().default(""),
   bio: text("bio").notNull().default(""),
   gender: text("gender").notNull().default(""),
   birthday: text("birthday").notNull().default(""),
@@ -100,6 +102,7 @@ export const conversations = sqliteTable("conversations", {
   archived: integer("archived").notNull().default(0),
   pinned: integer("pinned").notNull().default(0),
   unread: integer("unread").notNull().default(0),
+  temporary: integer("temporary").notNull().default(0),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -117,6 +120,7 @@ export const messages = sqliteTable("messages", {
   stats: text("stats"),
   sources: text("sources"),
   activities: text("activities"),
+  rating: integer("rating").notNull().default(0),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -164,6 +168,7 @@ export const userSettings = sqliteTable("user_settings", {
   defaultThinking: integer("default_thinking").notNull().default(0),
   language: text("language").notNull().default("en"),
   showUsage: integer("show_usage").notNull().default(1),
+  loadToolsWhenNeeded: integer("load_tools").notNull().default(0),
   textSize: integer("text_size").notNull().default(100),
   systemPrompt: text("system_prompt").notNull().default(""),
   instructionTone: text("instruction_tone").notNull().default("default"),

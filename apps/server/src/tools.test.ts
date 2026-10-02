@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { stripToolMarkup } from "@wlfv/shared";
-import { parseToolCalls } from "./tools.ts";
+import { stripLeakedAssistant, stripToolMarkup } from "@wlfv/shared";
+import { extractRunnableBlocks } from "./code-interpreter.ts";
+import { parseToolCalls, questionNeedsCode } from "./tools.ts";
 
 test("parses OpenRouter-style memory_add tool markup", () => {
   const text = `<|tool_call_start|>[memory_add(content='User name: Alex, Age: 30', category='identity')]<|tool_call_end|>`;
@@ -59,4 +60,34 @@ This script uses Playwright to open the official UFC event page.
   const calls = parseToolCalls(text);
   assert.equal(calls.some((call) => call.name === "fetch_url" && call.arguments.url.includes("ufc.com")), true);
   assert.equal(stripToolMarkup(text), "");
+});
+
+test("a name or hobby message does not request code", () => {
+  assert.equal(questionNeedsCode("Hello my name is quinten im 22 years old and born on 7 may 2004"), false);
+  assert.equal(questionNeedsCode("my hobbies are Designing programming and it stuff"), false);
+  assert.equal(questionNeedsCode("what do you remember about me?"), false);
+  assert.equal(questionNeedsCode("calculate 12 * 8"), true);
+});
+
+test("profile text inside python-run is not executed or shown", () => {
+  const text = `Hello Quinten!
+
+\`\`\`python-run
+User profile
+The user's name is Quinten.
+The user works as a Designer.
+\`\`\`
+
+**Code output**
+\`\`\`
+Run 1:
+Python was not found
+\`\`\``;
+  assert.equal(extractRunnableBlocks(text).length, 0);
+  const cleaned = stripLeakedAssistant(text, false);
+  assert.match(cleaned, /Hello Quinten/);
+  assert.doesNotMatch(cleaned, /python-run/);
+  assert.doesNotMatch(cleaned, /User profile/);
+  assert.doesNotMatch(cleaned, /Code output/);
+  assert.doesNotMatch(cleaned, /Python was not found/);
 });

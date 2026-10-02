@@ -4,7 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { sessions, userSettings, users } from "./db/schema.ts";
 import type { DB } from "./db/index.ts";
 import { hashPassword, requireAdmin, requireUser, verifyPassword } from "./auth.ts";
-import { DEFAULT_SYSTEM_PROMPT, parseUserPlan, parseUserRole } from "@wlfv/shared";
+import { DEFAULT_SYSTEM_PROMPT, parseUserPlan, parseUserRole, parseWorkRole } from "@wlfv/shared";
 import { computeUsage, getTokenQuota, listPlanUsage, resetUsage } from "./usage.ts";
 import { ensureDefaultSkills } from "./default-skills.ts";
 
@@ -19,6 +19,8 @@ function publicUser(row: typeof users.$inferSelect) {
     email: row.email,
     username: row.username,
     displayName: row.displayName?.trim() || row.username,
+    preferredName: row.preferredName || "",
+    work: row.work || "",
     bio: row.bio || "",
     gender: row.gender || "",
     birthday: row.birthday || "",
@@ -115,6 +117,8 @@ export function registerUsers(app: FastifyInstance, db: DB) {
     const body = req.body as {
       username?: string;
       displayName?: string;
+      preferredName?: string;
+      work?: string;
       bio?: string;
       gender?: string;
       birthday?: string;
@@ -130,6 +134,9 @@ export function registerUsers(app: FastifyInstance, db: DB) {
       if (usernameError) return reply.code(400).send({ error: usernameError });
       if (usernameTaken(db, username, row.id)) return reply.code(409).send({ error: "That username is already in use." });
     }
+    const preferredName = body.preferredName != null ? String(body.preferredName).trim().slice(0, 80) : row.preferredName || "";
+    const work = body.work != null ? parseWorkRole(body.work) : row.work || "";
+    if (body.work != null && body.work !== "" && !work) return reply.code(400).send({ error: "Choose a valid type of work." });
     const bio = body.bio != null ? String(body.bio).trim().slice(0, 500) : row.bio || "";
     const gender = body.gender != null ? String(body.gender) : row.gender || "";
     if (!GENDERS.has(gender)) return reply.code(400).send({ error: "Choose a valid gender." });
@@ -157,6 +164,8 @@ export function registerUsers(app: FastifyInstance, db: DB) {
       .set({
         username,
         displayName,
+        preferredName,
+        work,
         bio,
         gender,
         birthday,

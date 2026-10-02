@@ -47,6 +47,7 @@ export function registerRest(app: FastifyInstance, db: DB) {
       memoryEnabled?: boolean;
       language?: string;
       showUsage?: boolean;
+      loadToolsWhenNeeded?: boolean;
       animations?: boolean;
       textSize?: number;
       systemPrompt?: string;
@@ -72,6 +73,7 @@ export function registerRest(app: FastifyInstance, db: DB) {
           memoryEnabled: body.memoryEnabled === false ? 0 : 1,
           language: body.language === "nl" ? "nl" : body.language === "en" ? "en" : "en",
           showUsage: body.showUsage === false ? 0 : 1,
+          loadToolsWhenNeeded: body.loadToolsWhenNeeded ? 1 : 0,
           textSize: body.textSize == null ? 100 : clampTextSize(body.textSize),
           systemPrompt: (body.systemPrompt ?? DEFAULT_SYSTEM_PROMPT).slice(0, 16000),
           instructionTone: parseInstructionTone(body.instructionTone),
@@ -86,6 +88,7 @@ export function registerRest(app: FastifyInstance, db: DB) {
           memoryEnabled: body.memoryEnabled == null ? current.memoryEnabled : body.memoryEnabled ? 1 : 0,
           language: body.language == null ? current.language : body.language === "nl" ? "nl" : "en",
           showUsage: body.showUsage == null ? current.showUsage : body.showUsage ? 1 : 0,
+          loadToolsWhenNeeded: body.loadToolsWhenNeeded == null ? current.loadToolsWhenNeeded : body.loadToolsWhenNeeded ? 1 : 0,
           animations: body.animations == null ? current.animations : body.animations ? 1 : 0,
           textSize: body.textSize == null ? current.textSize ?? 100 : clampTextSize(body.textSize),
           systemPrompt: body.systemPrompt == null ? current.systemPrompt : body.systemPrompt.slice(0, 16000),
@@ -113,6 +116,7 @@ export function registerRest(app: FastifyInstance, db: DB) {
       theme: current?.theme ?? "dark",
       memoryEnabled: current?.memoryEnabled !== 0,
       showUsage: current?.showUsage !== 0,
+      loadToolsWhenNeeded: current?.loadToolsWhenNeeded === 1,
       animations: current?.animations !== 0,
       textSize: clampTextSize(current?.textSize ?? 100),
       language: current?.language === "nl" ? "nl" : "en",

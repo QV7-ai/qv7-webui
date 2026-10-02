@@ -1,6 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useMatch, useNavigate, useSearchParams } from "react-router-dom";
 import { Menu, X } from "lucide-react";
+
+function TemporaryChatIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M5.2 6.2A2.7 2.7 0 0 1 7.9 3.5h8.4a2.7 2.7 0 0 1 2.7 2.7v6.2a2.7 2.7 0 0 1-2.7 2.7H9.1L5.2 18.4Z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+      <circle cx="17.4" cy="7" r="3.7" fill="var(--bg)" stroke="currentColor" strokeWidth="1.7" />
+      <path d="M17.4 5.15V7l1.25.85" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
 import { useSidebarSwipe } from "@/lib/use-sidebar-swipe";
 import type { ChatModel, ChatFolder, ModelCategory, WebSearchSource, ChatActivity, AppFeatures, PublicBranding, UserSkill } from "@wlfv/shared";
 import { DEFAULT_APP_GENERAL } from "@wlfv/shared";
@@ -17,6 +32,7 @@ import { parseCanvases, type CanvasDoc } from "@wlfv/shared";
 import { SkillsPage } from "@/components/skills/SkillsDialog";
 import { CommandPalette } from "@/components/command-palette/CommandPalette";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
+import { DEFAULT_LOGO } from "@/lib/branding";
 
 const MAX_QUEUE = 15;
 
@@ -28,6 +44,7 @@ type QueuedMessage = {
   createImage: boolean;
   editImage: boolean;
   canvas: boolean;
+  document: boolean;
   skillIds: string[];
 };
 
@@ -42,7 +59,8 @@ type ChatStreamPayload = {
   activities?: ChatActivity[];
   assistantId?: string;
   conversationId?: string;
-  userMessage?: { id: string; content: string };
+  userMessage?: { id: string; content: string; createdAt?: number };
+  assistantCreatedAt?: number;
   content?: string;
   thinking?: string;
   wait?: UiMessage["wait"];
@@ -66,7 +84,7 @@ function upsertRemoteTurn(prev: UiMessage[], json: ChatStreamPayload): UiMessage
   const userRaw = json.userMessage?.content || "";
   const parsed = splitUserContent(userRaw);
   const userMsg: UiMessage | null = json.userMessage
-    ? { id: json.userMessage.id, role: "user", content: parsed.text, images: parsed.images }
+    ? { id: json.userMessage.id, role: "user", content: parsed.text, images: parsed.images, createdAt: json.userMessage.createdAt }
     : null;
   const existing = prev.find((m) => m.id === json.assistantId);
   const asst: UiMessage = {
@@ -79,6 +97,7 @@ function upsertRemoteTurn(prev: UiMessage[], json: ChatStreamPayload): UiMessage
     sources: json.sources,
     activities: json.activities,
     canvas: existing?.canvas,
+    createdAt: json.assistantCreatedAt || existing?.createdAt,
   };
   const hasAsst = prev.some((m) => m.id === asst.id);
   const hasUser = userMsg ? prev.some((m) => m.id === userMsg.id) : true;
@@ -125,17 +144,26 @@ function applyRemoteChatEvent(prev: UiMessage[], ev: string, json: ChatStreamPay
   return prev;
 }
 
+function greetingPeriod(hour: number) {
+  if (hour >= 5 && hour < 12) return "greetingMorning" as const;
+  if (hour >= 12 && hour < 17) return "greetingAfternoon" as const;
+  if (hour >= 17 && hour < 22) return "greetingEvening" as const;
+  return "greetingNight" as const;
+}
+
 export default function ChatPage({
   branding,
   username,
+  displayName,
   isAdmin,
   onUserUpdate,
   onBrandingChange,
 }: {
   branding: PublicBranding;
   username: string;
+  displayName: string;
   isAdmin: boolean;
-  onUserUpdate?: (user: { username: string }) => void;
+  onUserUpdate?: (user: { username: string; displayName?: string }) => void;
   onBrandingChange?: (branding: PublicBranding) => void;
 }) {
   const tr = useT();
@@ -162,6 +190,7 @@ export default function ChatPage({
   const [thinkingLevel, setThinkingLevel] = useState<string | undefined>();
   const [effortSetting, setEffortSetting] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [temporary, setTemporary] = useState(false);
   const [palette, setPalette] = useState(false);
   const [openNewFolder, setOpenNewFolder] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -206,6 +235,7 @@ export default function ChatPage({
   const [skills, setSkills] = useState<UserSkill[]>([]);
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [canvasOn, setCanvasOn] = useState(false);
+  const [documentOn, setDocumentOn] = useState(false);
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [canvasDoc, setCanvasDoc] = useState<CanvasDoc | null>(null);
   const canvasDirty = useRef(false);
@@ -231,12 +261,20 @@ export default function ChatPage({
   const busyRef = useRef(false);
   const skipQueueRef = useRef(false);
   const conversationIdRef = useRef(conversationId);
+  const temporaryRef = useRef(false);
+  const temporaryChatIdRef = useRef<string | null>(null);
+  temporaryRef.current = temporary;
   const localStreamRef = useRef(false);
 
   useEffect(() => {
     conversationIdRef.current = conversationId;
     followedAssistant.current = null;
     stick.current = true;
+    const tempId = temporaryChatIdRef.current;
+    if (!tempId || !conversationId || conversationId === tempId) return;
+    temporaryChatIdRef.current = null;
+    void api.send(`/api/conversations/${tempId}`, "DELETE").catch(() => undefined);
+    setTemporary(false);
   }, [conversationId]);
 
   useEffect(() => {
@@ -490,6 +528,9 @@ export default function ChatPage({
           setMessages((d.conversation.messages ?? []).map((message: UiMessage & { status?: string }) => mapLoadedMessage(message)));
           if (d.conversation.modelId) setModelId(d.conversation.modelId);
           setPendingFolderId(d.conversation.folderId ?? null);
+          const isTemporary = Boolean(d.conversation.temporary);
+          setTemporary(isTemporary);
+          temporaryChatIdRef.current = isTemporary ? conversationId : null;
           startEvents();
         })
         .catch(() => {
@@ -538,7 +579,15 @@ export default function ChatPage({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  function discardTemporaryChat() {
+    const id = temporaryChatIdRef.current;
+    if (!id) return;
+    temporaryChatIdRef.current = null;
+    void api.send(`/api/conversations/${id}`, "DELETE").catch(() => undefined);
+  }
+
   function newChat(folderId: string | null = null) {
+    discardTemporaryChat();
     skipQueueRef.current = true;
     sendGenRef.current += 1;
     abortRef.current?.abort();
@@ -558,6 +607,11 @@ export default function ChatPage({
     if (pathname === "/skills" || conversationId) navigate("/chat");
   }
 
+  function toggleTemporary() {
+    setTemporary((on) => !on);
+    newChat(null);
+  }
+
   async function send(
     text = draft,
     options?: {
@@ -568,6 +622,7 @@ export default function ChatPage({
       createImage?: boolean;
       editImage?: boolean;
       canvas?: boolean;
+      document?: boolean;
       skillIds?: string[];
     },
   ) {
@@ -587,6 +642,7 @@ export default function ChatPage({
         createImage: next.createImage,
         editImage: next.editImage,
         canvas: next.canvas,
+        document: next.document,
         skillIds: next.skillIds,
       });
       return;
@@ -610,6 +666,7 @@ export default function ChatPage({
           createImage: useCreate,
           editImage: useEdit,
           canvas: options?.canvas ?? canvasOn,
+          document: options?.document ?? documentOn,
           skillIds: options?.skillIds ?? selectedSkillIds,
         },
       ]);
@@ -620,6 +677,7 @@ export default function ChatPage({
     }
     const requestedCanvas = Boolean(options?.canvas ?? canvasOn);
     const useCanvas = requestedCanvas && (isAdmin || features.toolCanvas);
+    const useDocument = Boolean(options?.document ?? documentOn);
     const useSearch = Boolean(options?.search ?? webSearchOn) && webSearchAvailable;
     const needsAsk = toolPermission === "ask" && (useSearch || codeInterpreterOn) && !options?.confirmed;
     const needsSearchConfirm =
@@ -640,9 +698,14 @@ export default function ChatPage({
     let id = conversationIdRef.current;
     if (!id) {
       try {
-        const created = await api.send("/api/conversations", "POST", { modelId: model.id, folderId: pendingFolderId });
+        const created = await api.send("/api/conversations", "POST", {
+          modelId: model.id,
+          folderId: temporaryRef.current ? null : pendingFolderId,
+          temporary: temporaryRef.current,
+        });
         if (gen !== sendGenRef.current) return;
         id = created.conversation.id as string;
+        if (temporaryRef.current) temporaryChatIdRef.current = id;
         conversationIdRef.current = id;
         createdIdRef.current = id;
         skipLoadRef.current = true;
@@ -668,15 +731,18 @@ export default function ChatPage({
       setAttachments([]);
     }
     setError("");
+    const sentAt = Date.now();
     const userMsg: UiMessage = {
-      id: `u-${Date.now()}`,
+      id: `u-${sentAt}`,
       role: "user",
       content: displayed,
       images: imageItems.map((item) => ({ url: item.url!, name: item.name })),
+      createdAt: sentAt,
     };
     const asst: UiMessage = {
-      id: `a-${Date.now()}`,
+      id: `a-${sentAt}`,
       role: "assistant",
+      createdAt: sentAt,
       content: "",
       thinking: "",
       streaming: true,
@@ -685,6 +751,7 @@ export default function ChatPage({
     };
     setMessages((prev) => [...prev, userMsg, asst]);
     const controller = new AbortController();
+    let serverMessageId = asst.id;
     abortRef.current = controller;
     try {
       const res = await fetch("/api/chat", {
@@ -701,6 +768,7 @@ export default function ChatPage({
           createImage: useCreate,
           editImage: useEdit,
           canvas: useCanvas,
+          document: useDocument,
           canvasTitle: useCanvas ? canvasDoc?.title : undefined,
           canvasHtml: useCanvas && canvasOpen && canvasDoc ? canvasDoc.html : undefined,
           skillIds: options?.skillIds ?? selectedSkillIds,
@@ -751,8 +819,9 @@ export default function ChatPage({
             activities?: ChatActivity[];
             saved?: string[];
             assistantId?: string;
+            messageId?: string;
           };
-          const targetId = json.assistantId || asst.id;
+          const targetId = json.assistantId || json.messageId || asst.id;
           const touch = (prev: UiMessage[], patch: Partial<UiMessage>) =>
             prev.map((m) => (m.id === targetId || m.id === asst.id ? { ...m, ...patch } : m));
           if (ev === "status" && json.stage) {
@@ -779,8 +848,14 @@ export default function ChatPage({
             setError(json.message || tr("generateError"));
           } else if (ev === "title") {
             await refreshChats();
-          } else if (ev === "done" && json.usage) {
-            setMessages((prev) => touch(prev, { usage: json.usage }));
+          } else if (ev === "done") {
+            const nextId = json.messageId || targetId;
+            serverMessageId = nextId;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === targetId || m.id === asst.id ? { ...m, id: nextId, streaming: false, usage: json.usage || m.usage } : m,
+              ),
+            );
           }
         }
       }
@@ -789,7 +864,9 @@ export default function ChatPage({
         setError(err instanceof Error ? err.message : tr("reachModelError"));
       }
     } finally {
-      setMessages((prev) => prev.map((m) => (m.streaming && m.id === asst.id ? { ...m, streaming: false } : m)));
+      setMessages((prev) =>
+        prev.map((m) => (m.streaming && (m.id === asst.id || m.id === serverMessageId) ? { ...m, id: serverMessageId, streaming: false } : m)),
+      );
       if (abortRef.current === controller) abortRef.current = null;
       refreshChats().catch(() => undefined);
       refreshLoaded().catch(() => undefined);
@@ -814,6 +891,7 @@ export default function ChatPage({
         createImage: next.createImage,
         editImage: next.editImage,
         canvas: next.canvas,
+        document: next.document,
         skillIds: next.skillIds,
       });
     }
@@ -847,6 +925,109 @@ export default function ChatPage({
     };
   })();
   const empty = messages.filter((m) => m.role !== "system").length === 0;
+  const shownName = (() => {
+    const name = (displayName || username).trim();
+    if (!name) return username;
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  })();
+  const greeting = tr(greetingPeriod(new Date().getHours()), { name: shownName });
+
+  function emptyIntro() {
+    return (
+      <>
+        <img src={branding.logoUrl || DEFAULT_LOGO} alt="" className="mb-3 h-8 w-8 rounded-md object-contain" />
+        <h1 className="text-[22px] font-medium tracking-tight">{greeting}</h1>
+        {pendingFolderId ? (
+          <p className="mt-2 text-[14px] text-[var(--secondary)]">
+            {tr("folderInstructions", { name: folders.find((folder) => folder.id === pendingFolderId)?.name || tr("folders") })}
+          </p>
+        ) : null}
+        {temporary ? <p className="mt-2 text-[14px] text-[var(--secondary)]">{tr("temporaryChatHint")}</p> : null}
+      </>
+    );
+  }
+
+  function composerDock() {
+    return (
+      <>
+        {error ? <p className="mb-2 text-[13px] text-[var(--danger)]">{error}</p> : null}
+        {queue.length ? (
+          <div className="flex flex-wrap items-center gap-1.5 pb-2">
+            <span className="text-[11px] text-[var(--secondary)]">
+              {tr("queued")} {queue.length}/{MAX_QUEUE}
+            </span>
+            {queue.map((item) => {
+              const label = (item.text || item.attachments.map((file) => file.name).join(", ") || "…").replace(/\s+/g, " ").trim();
+              return (
+                <span
+                  key={item.id}
+                  className="flex max-w-[180px] items-center gap-1 rounded-full bg-[var(--surface)] py-0.5 pl-2.5 pr-1 text-[12px]"
+                  title={label}
+                >
+                  <span className="min-w-0 truncate">{label}</span>
+                  <button
+                    type="button"
+                    className="rounded-full p-0.5 text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+                    aria-label={tr("removeFromQueue")}
+                    onClick={() => setQueueState(queueRef.current.filter((queued) => queued.id !== item.id))}
+                  >
+                    <X size={12} />
+                  </button>
+                </span>
+              );
+            })}
+          </div>
+        ) : null}
+        <Composer
+          value={draft}
+          onChange={setDraft}
+          onSend={() => void send()}
+          onStop={() => void stop()}
+          busy={busy}
+          queueFull={queue.length >= MAX_QUEUE}
+          queueCount={queue.length}
+          model={model}
+          thinking={thinking}
+          thinkingLevel={thinkingLevel}
+          onThinking={(on, level) => {
+            setThinking(on);
+            setThinkingLevel(level);
+          }}
+          webSearchAvailable={webSearchAvailable}
+          webSearchEnabled={isAdmin || features.toolWebSearch}
+          webSearch={webSearchOn}
+          onWebSearch={setWebSearchOn}
+          imageGenerationAvailable={features.imageGenerationEnabled}
+          createImage={createImageOn}
+          onCreateImage={setCreateImageOn}
+          imageEditAvailable={features.imageEditEnabled}
+          editImage={editImageOn}
+          onEditImage={setEditImageOn}
+          codeInterpreter={codeInterpreterOn}
+          codeInterpreterAvailable={isAdmin || features.toolCode}
+          onCodeInterpreter={setCodeInterpreterOn}
+          canvas={canvasOn}
+          canvasAvailable={isAdmin || features.toolCanvas}
+          webpageAvailable={isAdmin || features.toolWebpage}
+          onCanvas={setCanvasOn}
+          document={documentOn}
+          onDocument={setDocumentOn}
+          skills={skills}
+          selectedSkillIds={selectedSkillIds}
+          onToggleSkill={(id) =>
+            setSelectedSkillIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
+          }
+          toolPermissionsEnabled={features.toolPermissionsEnabled}
+          toolPermission={features.toolPermissionsEnabled ? toolPermission : null}
+          onToolPermission={setToolPermission}
+          attachments={attachments}
+          onAttachments={setAttachments}
+          dropZoneRef={chatPaneRef}
+          context={contextUsage}
+        />
+      </>
+    );
+  }
 
   return (
     <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-[var(--bg)] pt-[var(--safe-top)] md:pt-0">
@@ -963,6 +1144,18 @@ export default function ChatPage({
             </button>
             {skillsOpen ? null : <ModelSelector models={models} categories={categories} value={model?.id} onChange={setModelId} loadedIds={loadedIds} />}
           </div>
+          {skillsOpen ? null : (
+            <button
+              type="button"
+              className={`ml-auto rounded-lg p-2 hover:bg-[var(--hover)] ${temporary ? "bg-[var(--accent-soft)] text-[var(--accent)]" : "text-[var(--secondary)]"}`}
+              aria-label={tr(temporary ? "temporaryChatOn" : "temporaryChat")}
+              aria-pressed={temporary}
+              title={tr(temporary ? "temporaryChatOn" : "temporaryChat")}
+              onClick={toggleTemporary}
+            >
+              <TemporaryChatIcon />
+            </button>
+          )}
         </header>
         {skillsOpen ? (
           <SkillsPage
@@ -981,6 +1174,26 @@ export default function ChatPage({
         ) : (
         <div className="flex min-h-0 min-w-0 flex-1">
         <div className={`flex min-h-0 min-w-0 flex-1 flex-col ${canvasOpen ? "max-md:hidden" : ""}`}>
+        {empty ? (
+          phoneLayout ? (
+            <>
+              <div className="flex min-h-0 flex-1 flex-col justify-center overflow-y-auto px-4 py-6">
+                <div className="chat-shell w-full">{emptyIntro()}</div>
+              </div>
+              <div className="chat-shell w-full shrink-0 px-4">{composerDock()}</div>
+            </>
+          ) : (
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-6">
+            <div className="min-h-0 flex-1" />
+            <div className="chat-shell w-full">
+              {emptyIntro()}
+              <div className="mt-4">{composerDock()}</div>
+            </div>
+            <div className="min-h-0 flex-1" />
+          </div>
+          )
+        ) : (
+          <>
         <div
           ref={scroller}
           className="chat-scroll min-h-0 min-w-0 w-full flex-1 overflow-x-hidden overflow-y-auto"
@@ -991,18 +1204,6 @@ export default function ChatPage({
           }}
         >
           <div className="chat-shell flex min-h-full flex-col px-4">
-          {empty ? (
-            <div className="flex min-h-full flex-1 flex-col items-center justify-center px-2 text-center">
-              <h1 className="text-[26px] font-medium tracking-tight">
-                {tr("welcomeBackUser", { name: username })}
-              </h1>
-              {pendingFolderId ? (
-                <p className="mt-2 max-w-md text-[14px] text-[var(--secondary)]">
-                  {tr("folderInstructions", { name: folders.find((folder) => folder.id === pendingFolderId)?.name || tr("folders") })}
-                </p>
-              ) : null}
-            </div>
-          ) : (
             <MessageList
               messages={messages}
               assistantName={model?.displayName || branding.name}
@@ -1023,87 +1224,19 @@ export default function ChatPage({
                 setCanvasDoc(doc);
                 setCanvasOpen(true);
               }}
+              onRate={(id, rating) => {
+                const previous = messages.find((message) => message.id === id)?.rating || 0;
+                setMessages((prev) => prev.map((message) => (message.id === id ? { ...message, rating } : message)));
+                void api.send(`/api/messages/${id}/feedback`, "POST", { rating }).catch(() => {
+                  setMessages((prev) => prev.map((message) => (message.id === id ? { ...message, rating: previous } : message)));
+                });
+              }}
             />
-          )}
           </div>
         </div>
-        <div className="chat-shell w-full shrink-0 px-4">
-        {error ? (
-          <p className="mb-2 text-[13px] text-[var(--danger)]">{error}</p>
-        ) : null}
-        {queue.length ? (
-          <div className="flex flex-wrap items-center gap-1.5 pb-2">
-            <span className="text-[11px] text-[var(--secondary)]">
-              {tr("queued")} {queue.length}/{MAX_QUEUE}
-            </span>
-            {queue.map((item) => {
-              const label = (item.text || item.attachments.map((file) => file.name).join(", ") || "…").replace(/\s+/g, " ").trim();
-              return (
-                <span
-                  key={item.id}
-                  className="flex max-w-[180px] items-center gap-1 rounded-full bg-[var(--surface)] py-0.5 pl-2.5 pr-1 text-[12px]"
-                  title={label}
-                >
-                  <span className="min-w-0 truncate">{label}</span>
-                  <button
-                    type="button"
-                    className="rounded-full p-0.5 text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
-                    aria-label={tr("removeFromQueue")}
-                    onClick={() => setQueueState(queueRef.current.filter((queued) => queued.id !== item.id))}
-                  >
-                    <X size={12} />
-                  </button>
-                </span>
-              );
-            })}
-          </div>
-        ) : null}
-        <Composer
-          value={draft}
-          onChange={setDraft}
-          onSend={() => void send()}
-          onStop={() => void stop()}
-          busy={busy}
-          queueFull={queue.length >= MAX_QUEUE}
-          queueCount={queue.length}
-          model={model}
-          thinking={thinking}
-          thinkingLevel={thinkingLevel}
-          onThinking={(on, level) => {
-            setThinking(on);
-            setThinkingLevel(level);
-          }}
-          webSearchAvailable={webSearchAvailable}
-          webSearchEnabled={isAdmin || features.toolWebSearch}
-          webSearch={webSearchOn}
-          onWebSearch={setWebSearchOn}
-          imageGenerationAvailable={features.imageGenerationEnabled}
-          createImage={createImageOn}
-          onCreateImage={setCreateImageOn}
-          imageEditAvailable={features.imageEditEnabled}
-          editImage={editImageOn}
-          onEditImage={setEditImageOn}
-          codeInterpreter={codeInterpreterOn}
-          codeInterpreterAvailable={isAdmin || features.toolCode}
-          onCodeInterpreter={setCodeInterpreterOn}
-          canvas={canvasOn}
-          canvasAvailable={isAdmin || features.toolCanvas}
-          webpageAvailable={isAdmin || features.toolWebpage}
-          onCanvas={setCanvasOn}
-          skills={skills}
-          selectedSkillIds={selectedSkillIds}
-          onToggleSkill={(id) =>
-            setSelectedSkillIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
-          }
-          toolPermissionsEnabled={features.toolPermissionsEnabled}
-          toolPermission={features.toolPermissionsEnabled ? toolPermission : null}
-          onToolPermission={setToolPermission}
-          attachments={attachments}
-          onAttachments={setAttachments}
-          dropZoneRef={chatPaneRef}
-          context={contextUsage}
-        />
-        </div>
+        <div className="chat-shell w-full shrink-0 px-4">{composerDock()}</div>
+          </>
+        )}
         </div>
         {canvasOpen && canvasDoc ? (
           <CanvasPanel

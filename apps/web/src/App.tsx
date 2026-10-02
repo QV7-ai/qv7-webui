@@ -25,7 +25,7 @@ export default function App() {
   useVisualViewportLock();
   const motionOn = useMotionEnabled();
   const [ready, setReady] = useState(false);
-  const [user, setUser] = useState<{ username: string; role: string } | null>(null);
+  const [user, setUser] = useState<{ username: string; displayName: string; role: string } | null>(null);
   const [pending, setPending] = useState<{ title: string; content: string; adminContactEmail: string } | null>(null);
   const [branding, setBranding] = useState<PublicBranding>(EMPTY_BRANDING);
 
@@ -42,7 +42,11 @@ export default function App() {
     api
       .get("/api/auth/me")
       .then((d) => {
-        setUser(d.user);
+        setUser(
+          d.user
+            ? { username: d.user.username, role: d.user.role, displayName: d.user.displayName || d.user.username }
+            : null,
+        );
         setPending(d.user?.role === "pending" ? d.pending ?? null : null);
       })
       .catch(() => {
@@ -72,8 +76,13 @@ export default function App() {
               <ChatPage
                 branding={branding}
                 username={user.username}
+                displayName={user.displayName || user.username}
                 isAdmin={user.role === "admin"}
-                onUserUpdate={(next) => setUser((current) => (current ? { ...current, username: next.username } : current))}
+                onUserUpdate={(next) =>
+                  setUser((current) =>
+                    current ? { ...current, username: next.username, displayName: next.displayName || next.username } : current,
+                  )
+                }
                 onBrandingChange={(next) => {
                   const branding = asPublicBranding(next);
                   setBranding(branding);

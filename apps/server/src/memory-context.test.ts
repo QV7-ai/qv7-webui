@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildMemoryContext, MEMORY_CONTEXT_OPEN, rankMemories } from "./memory-context.ts";
-import { parseToolCalls } from "./tools.ts";
+import { parseToolCalls, questionNeedsSearch } from "./tools.ts";
 
 test("caps user memories and retrieves matching hardware instead of dumping everything", () => {
   const memories = [
@@ -53,6 +53,14 @@ test("does not treat a greeting as a reason to retrieve hardware", () => {
     ranked.some((item) => /Blackview/.test(item.content)),
     false,
   );
+});
+
+test("runs a bare search_web line and spots questions that need current facts", () => {
+  const calls = parseToolCalls("Sure, searching for the next UFC match.\n\nsearch_web\n\nI will wait for the response.");
+  assert.equal(calls.some((call) => call.name === "search_web"), true);
+  assert.equal(questionNeedsSearch("whats the card of the next ufc match"), true);
+  assert.equal(questionNeedsSearch("search for it"), true);
+  assert.equal(questionNeedsSearch("hello"), false);
 });
 
 test("understands Open WebUI memory tool names", () => {

@@ -17,7 +17,7 @@ test("parses path and type like Open WebUI", () => {
   const ops = parseMemoryOperations(
     '{"operations":[{"action":"add","type":"user","path":"Communicatiestijl","content":"Use informal Dutch"}]}',
   );
-  assert.equal(ops[0]?.path, "Communicatiestijl");
+  assert.equal(ops[0]?.path, "Communication");
   assert.equal(ops[0]?.memoryType, "user");
 });
 
@@ -31,7 +31,7 @@ test("summarizes first-person hardware instead of storing the prompt", () => {
   const drafts = fallbackMemoryDrafts("ik heb een gaming pc met ene 9070xt videokaart");
   assert.equal(drafts.length, 1);
   assert.match(drafts[0].content, /9070xt/i);
-  assert.match(drafts[0].content, /gebruiker heeft/i);
+  assert.match(drafts[0].content, /the user has/i);
   assert.equal(drafts[0].path, "Hardware");
 });
 
@@ -68,7 +68,7 @@ test("does not treat a new location as the same as an unrelated memory", () => {
   const location = fallbackMemoryDrafts("De gebruiker woont in Utrecht")[0];
   assert.ok(location);
   assert.equal(memoriesOverlap(instruction, location.content), false);
-  assert.equal(location.path, "Locatie");
+  assert.equal(location.path, "Location");
 });
 
 test("updates the same location instead of adding another", () => {
@@ -84,7 +84,7 @@ test("saves a communication-style preference", () => {
   );
   assert.equal(drafts.length, 1);
   assert.equal(drafts[0].category, "preference");
-  assert.equal(drafts[0].path, "Communicatiestijl");
+  assert.equal(drafts[0].path, "Communication");
   assert.equal(drafts[0].memoryType, "preference");
 });
 
@@ -103,7 +103,7 @@ test("treats a hello how-are-you as casual chat", () => {
 });
 
 test("rewrites first-person memories so the model is not the user", () => {
-  assert.match(memoryLineForPrompt("Ik ben Alex en ik heb een homelab"), /De gebruiker is Alex/i);
+  assert.match(memoryLineForPrompt("Ik ben Alex en ik heb een homelab"), /The user is Alex/i);
   assert.doesNotMatch(memoryLineForPrompt("Ik ben Alex"), /^Ik ben/i);
 });
 
@@ -115,28 +115,28 @@ test("does not save a who-am-i question", () => {
 test("saves labeled profile fields in one identity memory", () => {
   const drafts = fallbackMemoryDrafts("Geslacht: Man, Leeftijd: 30, Geboortedatum: 1 januari");
   assert.equal(drafts.length, 1);
-  assert.equal(drafts[0].content, "Geslacht: Man, Leeftijd: 30, Geboortedatum: 1 januari");
-  assert.equal(drafts[0].path, "Identiteit");
+  assert.equal(drafts[0].content, "Gender: Male, Age: 30, Birthday: January 1");
+  assert.equal(drafts[0].path, "Identity");
 });
 
 test("does not prefix unrelated facts as a birthday", () => {
   const drafts = fallbackMemoryDrafts("De gebruiker heeft een 9070xt videokaart en 16 GB RAM");
   assert.equal(drafts.length, 1);
-  assert.doesNotMatch(drafts[0].content, /Geboortedatum/i);
+  assert.doesNotMatch(drafts[0].content, /Birthday/i);
   assert.match(drafts[0].content, /9070xt/i);
 });
 
 test("strips a false birthday label from a saved fact", () => {
   const drafts = fallbackMemoryDrafts("Geboortedatum: De gebruiker woont in Utrecht");
   assert.equal(drafts.length, 1);
-  assert.doesNotMatch(drafts[0].content, /Geboortedatum/i);
+  assert.doesNotMatch(drafts[0].content, /Birthday/i);
   assert.match(drafts[0].content, /Utrecht/i);
 });
 
 test("strips a birthday label from a numbered fact", () => {
   const drafts = fallbackMemoryDrafts("Geboortedatum: De gebruiker heeft 16 GB RAM");
   assert.equal(drafts.length, 1);
-  assert.doesNotMatch(drafts[0].content, /Geboortedatum/i);
+  assert.doesNotMatch(drafts[0].content, /Birthday/i);
   assert.match(drafts[0].content, /16 GB RAM/i);
 });
 
@@ -145,14 +145,65 @@ test("does not keep a birthday path for an unrelated add", () => {
     JSON.stringify({ action: "add", path: "Geboortedatum", content: "De gebruiker woont in Utrecht" }),
   );
   assert.equal(ops.length, 1);
-  assert.doesNotMatch(ops[0].content || "", /Geboortedatum/i);
-  assert.notEqual(ops[0].path, "Geboortedatum");
+  assert.doesNotMatch(ops[0].content || "", /Birthday/i);
+  assert.notEqual(ops[0].path, "Birthday");
   assert.match(ops[0].content || "", /Utrecht/i);
+});
+
+test("saves one interest memory from a hobbies statement", () => {
+  const drafts = fallbackMemoryDrafts("My hobbies are gaming, programming and design.");
+  assert.equal(drafts.length, 1);
+  assert.equal(drafts[0].path, "Interests");
+  assert.equal(drafts[0].category, "preference");
+  assert.match(drafts[0].content, /gaming/i);
+  assert.match(drafts[0].content, /program/i);
+  assert.match(drafts[0].content, /design/i);
+});
+
+test("saves one memory for a like statement", () => {
+  const drafts = fallbackMemoryDrafts("I like gaming and building PCs.");
+  assert.equal(drafts.length, 1);
+  assert.match(drafts[0].content, /gaming/i);
+  assert.match(drafts[0].content, /PC/i);
+});
+
+test("saves one memory for tools the user works with", () => {
+  const drafts = fallbackMemoryDrafts("I work with TypeScript and React.");
+  assert.equal(drafts.length, 1);
+  assert.match(drafts[0].content, /TypeScript/);
+  assert.match(drafts[0].content, /React/);
+});
+
+test("saves one memory for software the user runs", () => {
+  const drafts = fallbackMemoryDrafts("I use Proxmox for my homelab.");
+  assert.equal(drafts.length, 1);
+  assert.match(drafts[0].content, /Proxmox/);
+  assert.match(drafts[0].content, /homelab/i);
+});
+
+test("does not save a question about hobbies or languages", () => {
+  assert.deepEqual(fallbackMemoryDrafts("What hobbies should I try?"), []);
+  assert.deepEqual(fallbackMemoryDrafts("What programming language should I learn?"), []);
+});
+
+test("keeps an unpunctuated hobby list in one memory", () => {
+  const drafts = fallbackMemoryDrafts("My hobbies are designing, programming and IT stuff");
+  assert.equal(drafts.length, 1);
+  assert.match(drafts[0].content, /design/i);
+  assert.match(drafts[0].content, /program/i);
+  assert.match(drafts[0].content, /\bit\b/i);
+});
+
+test("saves name, age, and birthday from one english sentence", () => {
+  const drafts = fallbackMemoryDrafts("Hello my name Quinten 22 years old and i was born may 7 2004");
+  assert.equal(drafts.length, 1);
+  assert.equal(drafts[0].content, "Name: Quinten, Age: 22, Birthday: May 7, 2004");
+  assert.equal(drafts[0].path, "Identity");
 });
 
 test("merges a later birthday into the existing identity memory", () => {
   const first = fallbackMemoryDrafts("Geslacht: Man, Leeftijd: 22")[0];
   const second = fallbackMemoryDrafts("Geboortedatum: 1 januari")[0];
   assert.equal(memoriesOverlap(first.content, second.content), true);
-  assert.equal(pickMemorySummary(first.content, second.content), "Geslacht: Man, Leeftijd: 30, Geboortedatum: 1 januari");
+  assert.equal(pickMemorySummary(first.content, second.content), "Gender: Male, Age: 22, Birthday: January 1");
 });

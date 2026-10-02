@@ -8,23 +8,9 @@ import {
 } from "@wlfv/shared";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar";
 import { useT } from "@/lib/language";
-
-function Switch({ checked, onChange, label }: { checked: boolean; onChange: (value: boolean) => void; label?: string }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={() => onChange(!checked)}
-      className={`relative h-5 w-9 shrink-0 rounded-full transition ${checked ? "bg-[var(--accent)]" : "bg-[var(--surface)]"}`}
-    >
-      <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${checked ? "left-4.5 right-0.5 left-auto" : "left-0.5"}`} style={{ left: checked ? 18 : 2 }} />
-    </button>
-  );
-}
 
 function blank(kind: ConnectionKind): ProviderConnection {
   return {

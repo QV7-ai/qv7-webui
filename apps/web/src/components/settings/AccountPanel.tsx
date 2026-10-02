@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { WORK_GROUPS, WORK_ROLES } from "@wlfv/shared";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { t, type UiLang } from "@/lib/i18n";
@@ -15,6 +16,8 @@ export function AccountPanel({
 }) {
   const lang = language;
   const [displayName, setDisplayName] = useState("");
+  const [preferredName, setPreferredName] = useState("");
+  const [work, setWork] = useState("");
   const [username, setUsername] = useState("");
   const [bio, setBio] = useState("");
   const [gender, setGender] = useState("");
@@ -35,6 +38,8 @@ export function AccountPanel({
       .get("/api/account")
       .then((d) => {
         setDisplayName(d.user.displayName || d.user.username || "");
+        setPreferredName(d.user.preferredName || "");
+        setWork(d.user.work || "");
         setUsername(d.user.username || "");
         setBio(d.user.bio || "");
         setGender(d.user.gender || "");
@@ -52,6 +57,8 @@ export function AccountPanel({
     try {
       const data = await api.send("/api/account", "PATCH", {
         displayName,
+        preferredName,
+        work,
         username,
         bio,
         gender,
@@ -64,6 +71,8 @@ export function AccountPanel({
         displayName: data.user.displayName,
       });
       setDisplayName(data.user.displayName);
+      setPreferredName(data.user.preferredName || "");
+      setWork(data.user.work || "");
       setUsername(data.user.username);
       setMessage(t(lang, "accountUpdated"));
     } catch (err) {
@@ -113,6 +122,35 @@ export function AccountPanel({
             maxLength={80}
             required
           />
+        </label>
+        <label className="block text-[13px]">
+          {t(lang, "accountCallName")}{" "}
+          <span className="align-middle text-[11px] font-normal text-[var(--muted)]">{t(lang, "experimental")}</span>
+          <input
+            value={preferredName}
+            onChange={(event) => setPreferredName(event.target.value)}
+            className={inputClass}
+            maxLength={80}
+            autoComplete="off"
+          />
+          <span className="mt-1 block text-[12px] text-[var(--muted)]">{t(lang, "accountCallNameHint")}</span>
+        </label>
+        <label className="block text-[13px]">
+          {t(lang, "accountWork")}{" "}
+          <span className="align-middle text-[11px] font-normal text-[var(--muted)]">{t(lang, "experimental")}</span>
+          <select value={work} onChange={(event) => setWork(event.target.value)} className={inputClass}>
+            <option value="">{t(lang, "genderUnspecified")}</option>
+            {WORK_GROUPS.map((group) => (
+              <optgroup key={group.id} label={group[lang]}>
+                {WORK_ROLES.filter((role) => role.group === group.id).map((role) => (
+                  <option key={role.id} value={role.id}>
+                    {role[lang]}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+          <span className="mt-1 block text-[12px] text-[var(--muted)]">{t(lang, "accountWorkHint")}</span>
         </label>
         <label className="block text-[13px]">
           {t(lang, "accountUsername")}

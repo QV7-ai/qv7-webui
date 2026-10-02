@@ -1,4 +1,4 @@
-import { distinctiveTokens, normalizeMemoryPath, stripFalseBirthdayLabel } from "./memory-ops.ts";
+import { distinctiveTokens, englishMemoryPath, normalizeMemoryPath, stripFalseBirthdayLabel } from "./memory-ops.ts";
 
 export const MEMORY_CONTEXT_OPEN = "<memory_context>";
 export const MEMORY_CONTEXT_CLOSE = "</memory_context>";
@@ -25,8 +25,8 @@ function pathParts(path?: string | null) {
 
 export function memoryLabel(memory: Pick<MemoryRow, "content" | "path">) {
   const content = stripFalseBirthdayLabel(memory.content || "");
-  let path = String(memory.path || "").trim();
-  if (/^geboortedatum$/i.test(path) && !/^Geboortedatum:/i.test(content)) path = "";
+  let path = englishMemoryPath(String(memory.path || "").trim());
+  if (/^(birthday|geboortedatum)$/i.test(path) && !/^Birthday:/i.test(content)) path = "";
   return path ? `${path}: ${content}` : content;
 }
 
@@ -62,15 +62,18 @@ function pathRank(memoryPath: string | null | undefined, lookupPath: string) {
   if (parent(memory) && parent(memory) === parent(lookup)) return [3, 0] as const;
   const shared = pathParts(memory).filter((part) => pathParts(lookup).includes(part)).length;
   if (shared) return [4, -shared] as const;
+  const last = (path: string) => pathParts(path).at(-1);
+  if (last(memory) && last(memory) === last(lookup)) return [5, 0] as const;
   return null;
 }
 
 export function searchMemoryRows(
   memories: MemoryRow[],
-  opts: { query?: string; path?: string; memoryType?: string; limit?: number },
+  opts: { query?: string; path?: string; memoryId?: string; memoryType?: string; limit?: number },
 ) {
   const limit = Math.max(1, Math.min(opts.limit ?? 20, 100));
   let rows = [...memories];
+  if (opts.memoryId) rows = rows.filter((item) => item.id === opts.memoryId);
   if (opts.memoryType && opts.memoryType !== "all") {
     const want = opts.memoryType.toLowerCase();
     rows = rows.filter((item) => String(item.memoryType || "user").toLowerCase() === want);
@@ -197,28 +200,68 @@ export function buildMemoryContext(
 }
 
 export function listMemoryPathGroups(memories: MemoryRow[], limit = 100) {
-  const grouped = new Map<string, { path: string; type: string; count: number; updatedAt: number }>();
+  const cap = Math.max(1, Math.min(limit, 500));
+  const grouped = new Map<string, { path: string; type: string; count: number; updatedAt: number; children: string[] }>();
   for (const memory of memories) {
     const type = String(memory.memoryType || "user");
     const path = String(memory.path || "");
     const key = `${path}\0${type}`;
-    const current = grouped.get(key) || { path, type, count: 0, updatedAt: 0 };
+    const current = grouped.get(key) || { path, type, count: 0, updatedAt: 0, children: [] };
     current.count += 1;
     current.updatedAt = Math.max(current.updatedAt, memory.updatedAt || 0);
     grouped.set(key, current);
   }
-  return [...grouped.values()].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit);
+  const paths = [...grouped.values()].map((item) => item.path).filter(Boolean);
+  for (const group of grouped.values()) {
+    if (!group.path) continue;
+    const prefix = `${group.path}/`;
+    const children: string[] = [];
+    for (const candidate of paths) {
+      if (!candidate.startsWith(prefix)) continue;
+      const child = `${prefix}${candidate.slice(prefix.length).split("/")[0]}`;
+      if (!children.includes(child)) children.push(child);
+    }
+    group.children = children.slice(0, 20);
+  }
+  const groups = [...grouped.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+  return { paths: groups.slice(0, cap), count: groups.length };
 }
 
 export function readMemoryPath(memories: MemoryRow[], path: string, limit = 50) {
   const lookup = normalizeMemoryPath(path);
-  if (!lookup) return { path: "", memories: [] as MemoryRow[] };
-  const rows = memories.filter((item) => {
+  if (!lookup) return { path: "", parents: [] as string[], children: [] as string[], memories: [] as MemoryRow[] };
+  const cap = Math.max(1, Math.min(limit, 100));
+  const parts = pathParts(lookup);
+  const pathSet = new Set(memories.map((item) => normalizeMemoryPath(item.path || "")).filter(Boolean));
+  const parents = parts
+    .slice(0, -1)
+    .map((_, index) => parts.slice(0, index + 1).join("/"))
+    .filter((value) => pathSet.has(value));
+  const children = [
+    ...new Set(
+      memories
+        .map((item) => normalizeMemoryPath(item.path || ""))
+        .filter((value) => value.startsWith(`${lookup}/`))
+        .map((value) => `${lookup}/${value.slice(lookup.length + 1).split("/")[0]}`),
+    ),
+  ].sort();
+  const selected = memories.filter((item) => {
     const value = normalizeMemoryPath(item.path || "");
-    return value === lookup || value.startsWith(`${lookup}/`);
+    if (value === lookup || parents.includes(value)) return true;
+    return value.startsWith(`${lookup}/`);
   });
+  const rank = (item: MemoryRow) => {
+    const value = normalizeMemoryPath(item.path || "");
+    if (value === lookup) return 0;
+    if (value.startsWith(`${lookup}/`)) return 1;
+    return 2;
+  };
   return {
     path: lookup,
-    memories: rows.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, limit),
+    parents,
+    children: children.slice(0, 50),
+    memories: selected
+      .sort((a, b) => rank(a) - rank(b) || pathParts(a.path).length - pathParts(b.path).length || (b.updatedAt || 0) - (a.updatedAt || 0))
+      .slice(0, cap),
   };
 }

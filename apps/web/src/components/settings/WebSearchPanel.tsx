@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { DEFAULT_WEB_SEARCH, type WebSearchConfig } from "@wlfv/shared";
 import { api } from "@/lib/api";
 import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar";
+import { Switch } from "@/components/ui/switch";
 import { useT } from "@/lib/language";
 
 function Toggle({
@@ -21,7 +22,7 @@ function Toggle({
         <span className="block text-[14px] font-medium">{title}</span>
         <span className="mt-1 block text-[13px] text-[var(--muted)]">{hint}</span>
       </span>
-      <input type="checkbox" className="mt-1" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+      <Switch checked={checked} onChange={onChange} label={title} />
     </label>
   );
 }

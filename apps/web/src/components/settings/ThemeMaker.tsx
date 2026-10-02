@@ -5,6 +5,7 @@ import {
   type ThemeColorKey,
   type ThemePalette,
 } from "@wlfv/shared";
+import { Switch } from "@/components/ui/switch";
 import { useT } from "@/lib/language";
 
 const LABELS: Record<ThemeColorKey, "themeBg" | "themeSidebar" | "themeElevated" | "themeSurface" | "themeHover" | "themeText" | "themeSecondary" | "themeMuted" | "themeAccent" | "themeDanger" | "themeUser"> = {
@@ -116,20 +117,19 @@ export function ThemeMaker({
           <span className="block text-[14px] font-medium">{tr("customTheme")}</span>
           <span className="mt-1 block text-[13px] text-[var(--muted)]">{tr("customThemeHint")}</span>
         </span>
-        <input type="checkbox" className="mt-1" checked={enabled} onChange={(event) => onEnabled(event.target.checked)} />
+        <Switch checked={enabled} onChange={onEnabled} label={tr("customTheme")} />
       </label>
       <div className={`mt-4 ${enabled ? "" : "pointer-events-none opacity-45"}`}>
         <div className="flex flex-wrap items-center gap-2">
-          {(["dark", "light"] as const).map((id) => (
-            <button
-              key={id}
-              type="button"
-              className={`h-8 rounded-lg px-3 text-[13px] ${mode === id ? "bg-[var(--text)] text-[var(--bg)]" : "bg-[var(--surface)] text-[var(--secondary)]"}`}
-              onClick={() => onMode(id)}
-            >
-              {tr(id === "dark" ? "themeDark" : "themeLight")}
-            </button>
-          ))}
+          <select
+            className="h-9 min-w-40 rounded-lg bg-[var(--surface)] px-3 text-[13px] text-[var(--text)] outline-none"
+            value={mode}
+            aria-label={tr("customTheme")}
+            onChange={(event) => onMode(event.target.value === "light" ? "light" : "dark")}
+          >
+            <option value="dark">{tr("themeDark")}</option>
+            <option value="light">{tr("themeLight")}</option>
+          </select>
           <button
             type="button"
             className="ml-auto h-8 rounded-lg px-2 text-[12px] text-[var(--secondary)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
