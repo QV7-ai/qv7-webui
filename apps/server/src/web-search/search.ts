@@ -1,5 +1,9 @@
 import { ProxyAgent, Agent, fetch as undiciFetch } from "undici";
 import type { WebSearchConfig, WebSearchSource } from "@wlfv/shared";
+import { assertPublicHttpUrl, McpAddressError } from "../mcp/ssrf.ts";
+import { systemLookup } from "../mcp/client.ts";
+import { fetchPublicText } from "../security/fetch.ts";
+import { sanitizeSearchQuery } from "./query.ts";
 
 type Hit = WebSearchSource & { content: string };
 
@@ -34,15 +38,6 @@ export function domainAllowed(url: string, filter: string) {
   if (excludes.some((item) => host === item || host.endsWith(`.${item}`))) return false;
   if (!includes.length) return true;
   return includes.some((item) => host === item || host.endsWith(`.${item}`));
-}
-
-function isPrivateHost(hostname: string) {
-  const host = hostname.toLowerCase();
-  if (host === "localhost" || host.endsWith(".local") || host === "::1") return true;
-  const ipv4 = host.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
-  if (!ipv4) return false;
-  const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
-  return a === 10 || a === 127 || a === 0 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254);
 }
 
 export function htmlToText(html: string) {
@@ -80,22 +75,66 @@ function dispatcher(proxyUrl?: string, trustProxy = false) {
   return new Agent();
 }
 
-async function requestText(url: string, init: RequestInit, proxyUrl: string | undefined, trustProxy: boolean, timeoutMs: number) {
+async function readCapped(body: { getReader(): ReadableStreamDefaultReader<Uint8Array> } | null, maxBytes: number) {
+  if (!body) return "";
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      size += next.value.byteLength;
+      if (size > maxBytes) throw new Error("Response is too large.");
+      chunks.push(next.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+async function requestText(url: string, init: RequestInit, proxyUrl: string | undefined, trustProxy: boolean, timeoutMs: number, hops = 0): Promise<string> {
+  if (hops > 3) throw new Error("Too many redirects.");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const parent = init.signal;
+  if (parent) {
+    if (parent.aborted) controller.abort();
+    else parent.addEventListener("abort", () => controller.abort(), { once: true });
+  }
   try {
     const res = await undiciFetch(url, {
       ...init,
+      redirect: "manual",
       signal: controller.signal,
       dispatcher: dispatcher(proxyUrl, trustProxy),
       headers: {
         "User-Agent": "QV7/1.0 (+web-search)",
         Accept: "text/html,application/json;q=0.9,*/*;q=0.8",
+        "Accept-Encoding": "identity",
         ...(init.headers as Record<string, string> | undefined),
       },
     } as Parameters<typeof undiciFetch>[1]);
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get("location");
+      await res.body?.cancel();
+      if (!location) throw new Error("Redirect blocked.");
+      const next = new URL(location, url);
+      if (!["http:", "https:"].includes(next.protocol)) throw new Error("Redirect blocked.");
+      const sameHost = next.hostname === new URL(url).hostname;
+      if (!sameHost) {
+        try {
+          await assertPublicHttpUrl(next.toString(), systemLookup);
+        } catch (error) {
+          if (error instanceof McpAddressError) throw new Error("Redirect blocked.");
+          throw error;
+        }
+      }
+      return requestText(next.toString(), init, proxyUrl, trustProxy, timeoutMs, hops + 1);
+    }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.text();
+    return await readCapped(res.body, 1_500_000);
   } finally {
     clearTimeout(timer);
   }
@@ -131,6 +170,11 @@ async function youtubeTranscript(url: string, config: WebSearchConfig, timeoutMs
     langs.map((lang) => tracks.find((item) => (item.languageCode || "").toLowerCase().startsWith(lang))).find(Boolean) ||
     tracks[0];
   if (!track?.baseUrl) return null;
+  try {
+    await assertPublicHttpUrl(track.baseUrl, systemLookup);
+  } catch {
+    return null;
+  }
   const xml = await requestText(track.baseUrl, {}, config.youtubeProxyUrl || undefined, config.trustProxy, timeoutMs);
   return htmlToText(xml.replace(/<text[^>]*>/gi, " ").replace(/<\/text>/gi, " "));
 }
@@ -161,13 +205,11 @@ async function loadWithPlaywright(url: string, config: WebSearchConfig) {
 }
 
 async function loadPage(url: string, config: WebSearchConfig) {
-  let host = "";
   try {
-    host = new URL(url).hostname;
+    await assertPublicHttpUrl(url, systemLookup);
   } catch {
     return "";
   }
-  if (isPrivateHost(host)) return "";
   if (youtubeId(url)) {
     try {
       return (await youtubeTranscript(url, config, config.playwrightTimeoutMs)) || "";
@@ -183,8 +225,8 @@ async function loadPage(url: string, config: WebSearchConfig) {
     }
   }
   try {
-    const html = await requestText(url, {}, undefined, config.trustProxy, config.playwrightTimeoutMs);
-    return htmlToText(html);
+    const page = await fetchPublicText(url, { timeoutMs: config.playwrightTimeoutMs, maxBytes: 1_000_000 });
+    return htmlToText(page.text);
   } catch {
     return "";
   }
@@ -217,7 +259,9 @@ export async function runWebSearch(query: string, config: WebSearchConfig, signa
   sources: WebSearchSource[];
   context: string;
 }> {
-  const url = buildSearxngUrl(config, query);
+  const safeQuery = sanitizeSearchQuery(query);
+  if (!safeQuery) return { sources: [], context: "" };
+  const url = buildSearxngUrl(config, safeQuery);
   const raw = await requestText(url, { signal }, undefined, config.trustProxy, 20000);
   let data: { results?: { title?: string; url?: string; content?: string }[] };
   try {
@@ -243,7 +287,7 @@ export async function runWebSearch(query: string, config: WebSearchConfig, signa
       async (hit) => {
       if (signal?.aborted) return hit;
       const page = await loadPage(hit.url, config);
-      const content = retrieve(query, page || hit.snippet, config.fetchContentLengthLimit, config.bypassEmbedding);
+      const content = retrieve(safeQuery, page || hit.snippet, config.fetchContentLengthLimit, config.bypassEmbedding);
       return { ...hit, content: content || hit.snippet };
     });
   } else if (config.fetchContentLengthLimit) {

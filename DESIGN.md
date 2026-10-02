@@ -100,7 +100,7 @@ Motion is on unless the user turns it off. That sets `html[data-motion]`. `prefe
 - Show Thinking only when the model can think. Show Reasoning only when it has reasoning levels. Show Beta on Canvas, web search, and Document.
 - Reasoning effort appears in the plus menu and in model settings only when that model has levels. Choosing a level turns thinking on.
 - Switching chats closes the canvas. A new file in the chat you are in opens it again. The card on an older message still opens that file. A saved artifact keeps the edits from that message.
-- The canvas preview shows the current HTML as soon as it changes. The code view stays live. Opening Preview shows that same HTML.
+- While the model is writing, the canvas preview refreshes about every 10 seconds. The code view stays live. When the reply finishes, or the user edits the file, Preview shows that file right away.
 - Do not put the system prompt in Additional Instructions. That box is the user's extra text only.
 - Do not put skill chips in the composer bar. Skills are chosen in the plus menu and on the skills page.
 - The skills default switch means “load this skill in a new chat.”

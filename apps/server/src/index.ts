@@ -33,6 +33,7 @@ import { registerImages } from "./images/index.ts";
 import { registerCanvases } from "./canvases.ts";
 import { registerArtifacts } from "./artifacts.ts";
 import { registerMcp } from "./mcp/api.ts";
+import { installHttpGuards, intEnv } from "./security/http.ts";
 
 async function main() {
   const env = loadEnv();
@@ -47,29 +48,56 @@ async function main() {
     console.warn("Model sync skipped:", error instanceof Error ? error.message : error);
   }
 
-  const app = Fastify({ logger: true, requestTimeout: 0, connectionTimeout: 0, keepAliveTimeout: 72000 });
-  await app.register(cookie);
+  if (
+    env.nodeEnv === "production" &&
+    (env.sessionSecret === "dev-only-change-me" || env.sessionSecret === "change-me-to-a-long-random-string" || env.sessionSecret.length < 24)
+  ) {
+    console.warn("SESSION_SECRET is still a default or short value. Set a long random secret before exposing QV7.");
+  }
+
+  const app = Fastify({
+    logger: {
+      redact: {
+        paths: [
+          "req.headers.cookie",
+          "req.headers.authorization",
+          "req.body.password",
+          "req.body.currentPassword",
+          "req.body.newPassword",
+          "req.body.apiKey",
+          "req.body.secret",
+        ],
+        censor: "[redacted]",
+      },
+    },
+    bodyLimit: intEnv("JSON_BODY_LIMIT", 2 * 1024 * 1024, 64 * 1024, 8 * 1024 * 1024),
+    requestTimeout: 0,
+    connectionTimeout: 0,
+    keepAliveTimeout: 72000,
+  });
+  await app.register(cookie, { secret: env.sessionSecret });
   await app.register(cors, {
     origin: env.webOrigin,
     credentials: true,
   });
   await app.register(rateLimit, {
-    max: 600,
+    max: intEnv("RATE_LIMIT_MAX", 300, 30, 2000),
     timeWindow: "1 minute",
-    allowList: (req) => req.method === "GET" || req.method === "HEAD",
+    errorResponseBuilder: () => ({ statusCode: 429, error: "Too Many Requests", message: "Too many requests. Try again shortly." }),
   });
+  installHttpGuards(app, env);
   await app.register(multipart, {
     limits: { fileSize: 25 * 1024 * 1024, files: 8 },
   });
 
   app.get("/api/health", async () => {
     const client = firstOllamaClient(loadConnections(db, env));
-    if (!client) return { status: "ok", ollama: { connected: false, version: null } };
+    if (!client) return { status: "ok", ollama: { connected: false } };
     try {
-      const version = await client.version();
-      return { status: "ok", ollama: { connected: true, version } };
+      await client.version();
+      return { status: "ok", ollama: { connected: true } };
     } catch {
-      return { status: "ok", ollama: { connected: false, version: null } };
+      return { status: "ok", ollama: { connected: false } };
     }
   });
 

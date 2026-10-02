@@ -18,9 +18,20 @@ export function extractRunnableBlocks(text: string) {
   return blocks.slice(0, 3);
 }
 
+const ENV_KEEP = ["PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "LANG", "LC_ALL", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"];
+
+export function sandboxEnv() {
+  const env: Record<string, string> = { PYTHONUNBUFFERED: "1", PYTHONDONTWRITEBYTECODE: "1" };
+  for (const key of ENV_KEEP) {
+    const value = process.env[key];
+    if (value) env[key] = value;
+  }
+  return env;
+}
+
 function runCommand(command: string, args: string[], cwd: string, timeoutMs: number) {
   return new Promise<{ stdout: string; stderr: string; code: number }>((resolve) => {
-    const child = spawn(command, args, { cwd, windowsHide: true, env: { ...process.env, PYTHONUNBUFFERED: "1" } });
+    const child = spawn(command, args, { cwd, windowsHide: true, shell: false, env: sandboxEnv() });
     let stdout = "";
     let stderr = "";
     const timer = setTimeout(() => {

@@ -60,16 +60,28 @@ function ipv4Private(ip: string) {
 }
 
 function mappedV4(ip: string) {
-  const lower = ip.toLowerCase();
-  const mark = lower.startsWith("::ffff:") ? lower.slice(7) : "";
-  return mark && isIpv4(mark) ? mark : "";
+  const lower = ip.toLowerCase().replace(/^\[|\]$/g, "");
+  if (!lower.startsWith("::ffff:")) return "";
+  const rest = lower.slice(7);
+  if (isIpv4(rest)) return rest;
+  const groups = rest.split(":");
+  if (groups.length === 1 && /^[0-9a-f]{1,8}$/.test(groups[0] || "")) {
+    const n = Number.parseInt(groups[0], 16);
+    if (!Number.isFinite(n)) return "";
+    return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join(".");
+  }
+  if (groups.length === 2 && groups.every((group) => /^[0-9a-f]{1,4}$/.test(group))) {
+    const n = (Number.parseInt(groups[0], 16) << 16) + Number.parseInt(groups[1], 16);
+    return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join(".");
+  }
+  return "";
 }
 
 export function isMetadataAddress(ip: string) {
   const v4 = mappedV4(ip) || (isIpv4(ip) ? ip : "");
   if (v4 === "169.254.169.254" || v4 === "169.254.170.2") return true;
-  const v6 = ip.toLowerCase();
-  return v6 === "fd00:ec2::254" || v6 === "[fd00:ec2::254]";
+  const v6 = ip.toLowerCase().replace(/^\[|\]$/g, "");
+  return v6 === "fd00:ec2::254";
 }
 
 function isPrivateAddress(ip: string) {
@@ -77,7 +89,7 @@ function isPrivateAddress(ip: string) {
   const v4 = mappedV4(ip);
   if (v4) return ipv4Private(v4);
   if (isIpv4(ip)) return ipv4Private(ip);
-  const v6 = ip.toLowerCase();
+  const v6 = ip.toLowerCase().replace(/^\[|\]$/g, "");
   if (v6 === "::" || v6 === "::1") return true;
   if (v6.startsWith("fe80:") || v6.startsWith("fc") || v6.startsWith("fd") || v6.startsWith("ff")) return true;
   if (v6.startsWith("2001:db8:")) return true;
@@ -86,6 +98,30 @@ function isPrivateAddress(ip: string) {
 
 function metadataHost(host: string) {
   return METADATA_HOSTS.has(host) || host.endsWith(".metadata.google.internal");
+}
+
+export async function assertPublicHttpUrl(raw: string, lookup: DnsLookup) {
+  if (raw.length > 2000) throw new McpAddressError();
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    throw new McpAddressError();
+  }
+  if (url.username || url.password) throw new McpAddressError();
+  if (url.protocol !== "https:" && url.protocol !== "http:") throw new McpAddressError();
+  const host = stripDot(url.hostname.replace(/^\[|\]$/g, ""));
+  if (!host || metadataHost(host) || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) {
+    throw new McpAddressError();
+  }
+  const literal = expandIpv4(host);
+  const addresses = literal ? [literal] : isIP(host) ? [host] : await lookup(host).catch(() => [] as string[]);
+  if (!addresses.length) throw new McpAddressError();
+  for (const address of addresses) {
+    if (isMetadataAddress(address) || isPrivateAddress(address)) throw new McpAddressError();
+  }
+  url.hash = "";
+  return { href: url.href, host, addresses };
 }
 
 export async function assertSafeMcpUrl(raw: string, allowHosts: string[], lookup: DnsLookup) {

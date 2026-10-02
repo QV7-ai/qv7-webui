@@ -1554,6 +1554,7 @@ export default function ChatPage({
             canShare={features.sharingEnabled}
             versionIndex={canvasVersion}
             versionCount={listCanvasVersions(messages).length}
+            previewHold={messages.some((message) => message.role === "assistant" && message.streaming && message.id === canvasMsgId.current)}
             history={artifactHistory}
             onVersion={showCanvasVersion}
             onChange={scheduleSave}

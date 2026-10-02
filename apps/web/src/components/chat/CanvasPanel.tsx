@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent, type UIEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type UIEvent } from "react";
 import { ChevronLeft, ChevronRight, Code2, Copy, Download, Eye, History, MoreHorizontal, Share2, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -52,6 +52,7 @@ export function CanvasPanel({
   canShare,
   versionIndex = 0,
   versionCount = 1,
+  previewHold = false,
   history = [],
   onVersion,
   onChange,
@@ -72,6 +73,7 @@ export function CanvasPanel({
   canShare?: boolean;
   versionIndex?: number;
   versionCount?: number;
+  previewHold?: boolean;
   history?: VersionRow[];
   onVersion?: (index: number) => void;
   onChange: (content: string) => void;
@@ -94,11 +96,41 @@ export function CanvasPanel({
   const [titleDraft, setTitleDraft] = useState(title);
   const [editingTitle, setEditingTitle] = useState(false);
   const [shownType, setShownType] = useState(type);
+  const [preview, setPreview] = useState(content);
+  const latestPreview = useRef(content);
+  const previewTimer = useRef<number | null>(null);
+  latestPreview.current = content;
   if (titleDraft !== title && !editingTitle) setTitleDraft(title);
   if (shownType !== type) {
     setShownType(type);
     setMode(previewKind ? "preview" : "code");
   }
+
+  useEffect(() => {
+    if (previewTimer.current) {
+      window.clearTimeout(previewTimer.current);
+      previewTimer.current = null;
+    }
+    setPreview(content);
+  }, [versionIndex]);
+
+  useEffect(() => {
+    if (!previewHold) {
+      if (previewTimer.current) window.clearTimeout(previewTimer.current);
+      previewTimer.current = null;
+      setPreview(content);
+      return;
+    }
+    if (previewTimer.current != null) return;
+    previewTimer.current = window.setTimeout(() => {
+      previewTimer.current = null;
+      setPreview(latestPreview.current);
+    }, 10000);
+  }, [content, previewHold]);
+
+  useEffect(() => () => {
+    if (previewTimer.current) window.clearTimeout(previewTimer.current);
+  }, []);
 
   function showPreview() {
     setMode("preview");
@@ -343,25 +375,25 @@ export function CanvasPanel({
         </p>
       ) : null}
       {mode === "preview" && previewKind === "html" ? (
-        <iframe title={title} sandbox={previewSandbox("html") || undefined} srcDoc={content} className="min-h-0 w-full flex-1 bg-white" />
+        <iframe title={title} sandbox={previewSandbox("html") || undefined} srcDoc={preview} className="min-h-0 w-full flex-1 bg-white" />
       ) : mode === "preview" && previewKind === "svg" ? (
         <iframe
           title={title}
           sandbox=""
-          srcDoc={`<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;display:flex;justify-content:center;background:#fff">${content}</body></html>`}
+          srcDoc={`<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;display:flex;justify-content:center;background:#fff">${preview}</body></html>`}
           className="min-h-0 w-full flex-1 bg-white"
         />
       ) : mode === "preview" && previewKind === "css" ? (
-        <iframe title={title} sandbox="" srcDoc={cssPreviewSrcDoc(content)} className="min-h-0 w-full flex-1 bg-white" />
+        <iframe title={title} sandbox="" srcDoc={cssPreviewSrcDoc(preview)} className="min-h-0 w-full flex-1 bg-white" />
       ) : mode === "preview" && previewKind === "react" ? (
-        <iframe title={title} sandbox="allow-scripts" srcDoc={reactPreviewSrcDoc(content)} className="min-h-0 w-full flex-1 bg-white" />
+        <iframe title={title} sandbox="allow-scripts" srcDoc={reactPreviewSrcDoc(preview)} className="min-h-0 w-full flex-1 bg-white" />
       ) : mode === "preview" && previewKind === "script" ? (
-        <iframe title={title} sandbox="allow-scripts" srcDoc={scriptPreviewSrcDoc(content, language)} className="min-h-0 w-full flex-1 bg-white" />
+        <iframe title={title} sandbox="allow-scripts" srcDoc={scriptPreviewSrcDoc(preview, language)} className="min-h-0 w-full flex-1 bg-white" />
       ) : mode === "preview" && previewKind === "source" ? (
-        <ArtifactCode content={sourcePreviewText(content, language)} language={language} readOnly onChange={onChange} />
+        <ArtifactCode content={sourcePreviewText(preview, language)} language={language} readOnly onChange={onChange} />
       ) : mode === "preview" && previewKind === "markdown" ? (
         <div className="min-h-0 flex-1 overflow-auto px-5 py-4 text-[15px] leading-7">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{preview}</ReactMarkdown>
         </div>
       ) : (
         <ArtifactCode content={content} language={language} onChange={onChange} />

@@ -2,11 +2,12 @@ import { OllamaError } from "./errors.ts";
 
 function mapStatus(status: number, body: string): OllamaError {
   const lower = body.toLowerCase();
+  const safe = body.replace(/https?:\/\/\S+/gi, "[url]").slice(0, 240);
   if (status === 404 || lower.includes("not found")) {
-    return new OllamaError("MODEL_NOT_FOUND", body || "Model not found");
+    return new OllamaError("MODEL_NOT_FOUND", safe || "Model not found");
   }
-  if (status === 400) return new OllamaError("INVALID_REQUEST", body || "Invalid request");
-  return new OllamaError("UNKNOWN", body || `HTTP ${status}`);
+  if (status === 400) return new OllamaError("INVALID_REQUEST", safe || "Invalid request");
+  return new OllamaError("UNKNOWN", safe || `HTTP ${status}`);
 }
 
 export class OllamaClient {
@@ -41,7 +42,7 @@ export class OllamaClient {
       if (controller.signal.aborted) {
         throw new OllamaError("TIMEOUT", "Ollama request timed out");
       }
-      throw new OllamaError("OLLAMA_UNAVAILABLE", error instanceof Error ? error.message : "Unavailable");
+      throw new OllamaError("OLLAMA_UNAVAILABLE", "The model provider could not be reached.");
     } finally {
       clearTimeout(timer);
     }

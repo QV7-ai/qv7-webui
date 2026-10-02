@@ -17,7 +17,7 @@ import { executeMcpTool, mcpToolsPrompt, parseMcpCalls, validateToolArgs } from 
 import { registerMcp } from "./api.ts";
 import { formatToolResult, publicMcpMessage, redactSecrets } from "./sanitize.ts";
 import { encryptSecret, decryptSecret } from "./secrets.ts";
-import { assertSafeMcpUrl, McpAddressError } from "./ssrf.ts";
+import { assertPublicHttpUrl, assertSafeMcpUrl, McpAddressError } from "./ssrf.ts";
 import { callNameFor, cleanHeaderName } from "./store.ts";
 import { flushAssistantHeld, releaseAssistantDelta } from "./visible.ts";
 
@@ -38,6 +38,8 @@ test("ssrf blocks local, private, metadata, and rebinding targets", async () => 
     "https://1.1.1.1/mcp?token=secret",
     "file:///etc/passwd",
     "https://metadata.google.internal/computeMetadata/v1/",
+    "https://[::ffff:7f00:1]/mcp",
+    "http://2130706433/",
   ];
   for (const target of blocked) {
     await assert.rejects(() => assertSafeMcpUrl(target, [], async () => ["1.1.1.1"]), McpAddressError);
@@ -55,6 +57,11 @@ test("ssrf blocks local, private, metadata, and rebinding targets", async () => 
   assert.equal(allowed.host, "127.0.0.1");
   const pinned = await assertSafeMcpUrl("https://public.example/mcp", [], async () => ["1.1.1.1"]);
   assert.deepEqual(pinned.addresses, ["1.1.1.1"]);
+  await assert.rejects(() => assertPublicHttpUrl("http://127.0.0.1/", async () => ["127.0.0.1"]), McpAddressError);
+  await assert.rejects(() => assertPublicHttpUrl("https://rebind.example/", async () => ["1.1.1.1", "10.0.0.1"]), McpAddressError);
+  await assert.rejects(() => assertPublicHttpUrl("https://169.254.169.254/latest", async () => ["169.254.169.254"]), McpAddressError);
+  const pub = await assertPublicHttpUrl("https://public.example/path?q=1", async () => ["1.1.1.1"]);
+  assert.equal(pub.host, "public.example");
 });
 
 test("pinned connections prefer ipv4 and answer both lookup shapes", () => {
@@ -218,10 +225,10 @@ test("mcp api is admin only, secret-safe, and backend executed", async () => {
   await new Promise<void>((resolve) => mcp.listen(0, "127.0.0.1", resolve));
   const port = (mcp.address() as { port: number }).port;
   const app = Fastify();
-  await app.register(cookie);
+  await app.register(cookie, { secret: env.sessionSecret });
   registerMcp(app, db, env);
-  const adminCookie = { cookie: `wlfv_session=${adminSid}` };
-  const userCookie = { cookie: `wlfv_session=${userSid}` };
+  const adminCookie = { cookie: `wlfv_session=${app.signCookie(adminSid)}` };
+  const userCookie = { cookie: `wlfv_session=${app.signCookie(userSid)}` };
   try {
     const anon = await app.inject({ method: "GET", url: "/api/admin/mcp/servers" });
     assert.equal(anon.statusCode, 401);

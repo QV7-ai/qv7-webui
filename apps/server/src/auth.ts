@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import argon2 from "argon2";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { cookieSecure, intEnv } from "./security/http.ts";
 import { users, sessions, userSettings } from "./db/schema.ts";
 import type { DB } from "./db/index.ts";
 import type { Env } from "./env.ts";
@@ -11,6 +12,14 @@ import { ensureDefaultSkills } from "./default-skills.ts";
 
 const COOKIE = "wlfv_session";
 const DAY = 1000 * 60 * 60 * 24 * 14;
+const MAX_PASSWORD = 128;
+
+export function readSessionId(req: FastifyRequest) {
+  const raw = req.cookies[COOKIE];
+  if (!raw) return null;
+  const unsigned = req.unsignCookie(raw);
+  return unsigned?.valid ? unsigned.value : null;
+}
 
 export async function seedAdmin(db: DB, env: Env) {
   const existing = db.select().from(users).where(eq(users.role, "admin")).all();
@@ -59,13 +68,22 @@ export async function verifyPassword(hash: string, password: string) {
   return argon2.verify(hash, password);
 }
 
+let dummyHash: Promise<string> | null = null;
+function invalidLoginHash() {
+  dummyHash ??= hashPassword("qv7-invalid-login-placeholder");
+  return dummyHash;
+}
+
 export type AuthUser = { id: string; email: string; username: string; displayName: string; role: "admin" | "user" | "pending" };
 
 export async function getUser(req: FastifyRequest, db: DB): Promise<AuthUser | null> {
-  const sid = req.cookies[COOKIE];
+  const sid = readSessionId(req);
   if (!sid) return null;
   const row = db.select().from(sessions).where(eq(sessions.id, sid)).get();
-  if (!row || row.expiresAt < Date.now()) return null;
+  if (!row || row.expiresAt < Date.now()) {
+    if (row) db.delete(sessions).where(eq(sessions.id, sid)).run();
+    return null;
+  }
   const user = db.select().from(users).where(eq(users.id, row.userId)).get();
   if (!user) return null;
   return {
@@ -113,6 +131,17 @@ function publicAuthUser(user: { id: string; email: string; username: string; dis
   };
 }
 
+function cookieOptions(env: Env) {
+  return {
+    path: "/",
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: cookieSecure(env),
+    signed: true,
+    maxAge: DAY / 1000,
+  };
+}
+
 function issueSession(reply: FastifyReply, db: DB, env: Env, userId: string) {
   const id = randomBytes(32).toString("hex");
   const now = Date.now();
@@ -120,13 +149,7 @@ function issueSession(reply: FastifyReply, db: DB, env: Env, userId: string) {
     .values({ id, userId, expiresAt: now + DAY, createdAt: now })
     .run();
   db.update(users).set({ lastLoginAt: now }).where(eq(users.id, userId)).run();
-  reply.setCookie(COOKIE, id, {
-    path: "/",
-    httpOnly: true,
-    sameSite: "lax",
-    secure: env.nodeEnv === "production",
-    maxAge: DAY / 1000,
-  });
+  reply.setCookie(COOKIE, id, cookieOptions(env));
 }
 
 function uniqueUsername(db: DB, email: string) {
@@ -166,7 +189,9 @@ export function registerAuth(app: FastifyInstance, db: DB, env: Env) {
     return { config };
   });
 
-  app.post("/api/auth/register", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req, reply) => {
+  const authLimit = { config: { rateLimit: { max: intEnv("AUTH_RATE_LIMIT", 10, 3, 30), timeWindow: "1 minute" } } };
+
+  app.post("/api/auth/register", authLimit, async (req, reply) => {
     const config = loadAuthConfig(db);
     if (!config.signupsEnabled) return reply.code(403).send({ error: "New signups are disabled." });
     const body = req.body as { email?: string; password?: string; username?: string };
@@ -175,7 +200,7 @@ export function registerAuth(app: FastifyInstance, db: DB, env: Env) {
     if (!email || !(EMAIL.test(email) || email.endsWith("@localhost"))) {
       return reply.code(400).send({ error: "Enter a valid email address." });
     }
-    if (password.length < 8) return reply.code(400).send({ error: "Password must be at least 8 characters." });
+    if (password.length < 8 || password.length > MAX_PASSWORD) return reply.code(400).send({ error: "Password must be at least 8 characters." });
     if (db.select().from(users).where(eq(users.email, email)).get()) {
       return reply.code(409).send({ error: "That email is already in use." });
     }
@@ -222,23 +247,27 @@ export function registerAuth(app: FastifyInstance, db: DB, env: Env) {
     return { user: publicAuthUser(created) };
   });
 
-  app.post("/api/auth/login", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req, reply) => {
+  app.post("/api/auth/login", authLimit, async (req, reply) => {
     const body = req.body as { email?: string; password?: string };
     const email = body.email?.trim().toLowerCase();
     const password = body.password ?? "";
-    if (!email || !password) return reply.code(400).send({ error: "Email and password are required." });
+    if (!email || !password || password.length > MAX_PASSWORD) return reply.code(400).send({ error: "Email and password are required." });
     const user = db.select().from(users).where(eq(users.email, email)).get();
-    if (!user || !(await verifyPassword(user.passwordHash, password))) {
+    const ok = await verifyPassword(user?.passwordHash || (await invalidLoginHash()), password);
+    if (!user || !ok) {
+      req.log.warn({ security: "login_failed" }, "login failed");
       return reply.code(401).send({ error: "Invalid email or password." });
     }
     issueSession(reply, db, env, user.id);
+    req.log.info({ security: "login_ok", userId: user.id }, "login");
     return { user: publicAuthUser(user) };
   });
 
   app.post("/api/auth/logout", async (req, reply) => {
-    const sid = req.cookies[COOKIE];
+    const sid = readSessionId(req);
     if (sid) db.delete(sessions).where(eq(sessions.id, sid)).run();
-    reply.clearCookie(COOKIE, { path: "/" });
+    reply.clearCookie(COOKIE, { path: "/", httpOnly: true, sameSite: "lax", secure: cookieSecure(env) });
+    req.log.info({ security: "logout" }, "logout");
     return { ok: true };
   });
 

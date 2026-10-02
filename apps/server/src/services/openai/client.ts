@@ -40,7 +40,7 @@ export class OpenAICompatClient {
     } catch (error) {
       if (controller.signal.aborted && parent?.aborted) throw new OllamaError("REQUEST_ABORTED", "Request aborted");
       if (controller.signal.aborted) throw new OllamaError("TIMEOUT", "Request timed out");
-      throw new OllamaError("OLLAMA_UNAVAILABLE", error instanceof Error ? error.message : "Unavailable");
+      throw new OllamaError("OLLAMA_UNAVAILABLE", "The model provider could not be reached.");
     } finally {
       clearTimeout(timer);
     }
@@ -49,7 +49,7 @@ export class OpenAICompatClient {
   private async throwIfNotOk(res: Response) {
     if (res.ok) return;
     const raw = await res.text();
-    let message = raw.slice(0, 400) || `HTTP ${res.status}`;
+    let message = raw.replace(/https?:\/\/\S+/gi, "[url]").slice(0, 240) || `HTTP ${res.status}`;
     try {
       const parsed = JSON.parse(raw) as Record<string, unknown>;
       const failed = errorFromOpenAIChunk(parsed);

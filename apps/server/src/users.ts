@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { sessions, userSettings, users } from "./db/schema.ts";
 import type { DB } from "./db/index.ts";
-import { hashPassword, requireAdmin, requireUser, verifyPassword } from "./auth.ts";
+import { hashPassword, readSessionId, requireAdmin, requireUser, verifyPassword } from "./auth.ts";
 import { DEFAULT_SYSTEM_PROMPT, parseUserPlan, parseUserRole, parseWorkRole } from "@wlfv/shared";
 import { computeUsage, getTokenQuota, listPlanUsage, resetUsage } from "./usage.ts";
 import { ensureDefaultSkills } from "./default-skills.ts";
@@ -40,7 +40,7 @@ function validateEmail(email: string) {
 }
 
 function validatePassword(password: string) {
-  if (password.length < 8) return "Password must be at least 8 characters.";
+  if (password.length < 8 || password.length > 128) return "Password must be at least 8 characters.";
   return null;
 }
 
@@ -175,7 +175,7 @@ export function registerUsers(app: FastifyInstance, db: DB) {
       })
       .where(eq(users.id, row.id))
       .run();
-    if (body.newPassword) clearSessions(db, row.id, req.cookies.wlfv_session);
+    if (body.newPassword) clearSessions(db, row.id, readSessionId(req) || undefined);
     const next = db.select().from(users).where(eq(users.id, row.id)).get()!;
     return { user: publicUser(next) };
   });
@@ -264,7 +264,12 @@ export function registerUsers(app: FastifyInstance, db: DB) {
     const row = db.select().from(users).where(eq(users.id, id)).get();
     if (!row) return reply.code(404).send({ error: "User not found." });
     const body = req.body as { email?: string; username?: string; password?: string; role?: string; plan?: string };
-    const username = body.username?.trim() || row.username;
+    const username = body.username != null ? body.username.trim().toLowerCase() : row.username;
+    if (username !== row.username) {
+      const usernameError = validateUsername(username);
+      if (usernameError) return reply.code(400).send({ error: usernameError });
+      if (usernameTaken(db, username, row.id)) return reply.code(409).send({ error: "That username is already in use." });
+    }
     const email = body.email != null ? normalizeEmail(body.email) : row.email;
     const emailError = validateEmail(email);
     if (emailError) return reply.code(400).send({ error: emailError });

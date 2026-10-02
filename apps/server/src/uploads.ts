@@ -122,8 +122,12 @@ export function registerUploads(app: FastifyInstance, uploadsDir: string) {
       return reply.code(404).send({ error: "Not found." });
     }
     if (!fs.existsSync(abs)) return reply.code(404).send({ error: "Not found." });
-    if (isStoredDocumentName(file)) reply.header("Content-Disposition", "attachment");
-    reply.header("Cache-Control", "public, max-age=31536000, immutable");
-    return reply.type(mimeForIcon(file)).send(fs.createReadStream(abs));
+    const document = isStoredDocumentName(file);
+    if (document || file.toLowerCase().endsWith(".svg")) reply.header("Content-Disposition", "attachment");
+    reply.header("X-Content-Type-Options", "nosniff");
+    reply.header("Content-Security-Policy", "default-src 'none'; sandbox");
+    reply.header("Cache-Control", "private, max-age=3600");
+    const mime = document && file.toLowerCase().endsWith(".html") ? "text/plain; charset=utf-8" : mimeForIcon(file);
+    return reply.type(mime).send(fs.createReadStream(abs));
   });
 }
