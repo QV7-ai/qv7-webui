@@ -129,7 +129,9 @@ function bindingExpr(binding: ImportBinding) {
   if (/\.(css|scss|sass|less)$/.test(pkg)) return `new Proxy({}, { get: function (_, key) { return String(key); } })`;
   if (/\.(png|jpe?g|gif|svg|webp|avif|ico)$/.test(pkg)) return JSON.stringify(pkg);
   if (pkg.endsWith(".json")) return "{}";
-  if (imported === "*") return `new Proxy({}, { get: function (_, key) { return (${previewStub(String(key))}); } })`;
+  if (imported === "*") {
+    return `new Proxy({}, { get: function (_, key) { var name = String(key); if (name.indexOf("use") === 0) return function () { return {}; }; return function (props) { return React.createElement("div", null, props && props.children); }; } })`;
+  }
   return previewStub(imported === "default" ? local : imported);
 }
 
