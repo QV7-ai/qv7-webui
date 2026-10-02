@@ -193,6 +193,32 @@ export const canvasShares = sqliteTable("canvas_shares", {
   createdAt: integer("created_at").notNull(),
 });
 
+export const artifacts = sqliteTable("artifacts", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  conversationId: text("conversation_id")
+    .notNull()
+    .references(() => conversations.id, { onDelete: "cascade" }),
+  messageId: text("message_id"),
+  title: text("title").notNull(),
+  type: text("type").notNull(),
+  language: text("language").notNull().default(""),
+  content: text("content").notNull().default(""),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export const artifactVersions = sqliteTable("artifact_versions", {
+  id: text("id").primaryKey(),
+  artifactId: text("artifact_id")
+    .notNull()
+    .references(() => artifacts.id, { onDelete: "cascade" }),
+  version: integer("version").notNull(),
+  content: text("content").notNull(),
+  createdAt: integer("created_at").notNull(),
+  source: text("source").notNull(),
+});
+
 export const toolRuns = sqliteTable("tool_runs", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),

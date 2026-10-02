@@ -18,7 +18,8 @@ function TemporaryChatIcon() {
   );
 }
 import { useSidebarSwipe } from "@/lib/use-sidebar-swipe";
-import type { ChatModel, ChatFolder, ModelCategory, WebSearchSource, ChatActivity, AppFeatures, PublicBranding, UserSkill, UsedMemory } from "@wlfv/shared";
+import type { ChatModel, ChatFolder, ModelCategory, WebSearchSource, ChatActivity, AppFeatures, PublicBranding, UserSkill, UsedMemory, ArtifactAction, ArtifactFile, ArtifactType } from "@wlfv/shared";
+import { keepManualEdit } from "@wlfv/shared";
 import { DEFAULT_APP_GENERAL } from "@wlfv/shared";
 import { api } from "@/lib/api";
 import { applyMotion, applyTheme, applyTextSize } from "@/lib/i18n";
@@ -30,8 +31,7 @@ import { Composer, type ComposerAttachment } from "@/components/composer/Compose
 import { MessageList, listCanvasVersions, splitUserContent, type UiMessage } from "@/components/chat/MessageList";
 import { attachMemoryUsed } from "@/components/chat/memory-used";
 import { parseUsedMemories } from "@wlfv/shared";
-import { CanvasPanel } from "@/components/chat/CanvasPanel";
-import { type CanvasDoc } from "@wlfv/shared";
+import { CanvasPanel, artifactChatClass } from "@/components/chat/CanvasPanel";
 import { SkillsPage } from "@/components/skills/SkillsDialog";
 import { CommandPalette } from "@/components/command-palette/CommandPalette";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
@@ -50,6 +50,10 @@ type QueuedMessage = {
   document: boolean;
   skillIds: string[];
 };
+
+type OpenFile = { title: string; type: ArtifactType; language: string; content: string };
+type ArtifactVersion = { version: number; content: string; createdAt: number; source: string };
+type SavedArtifact = { id: string; messageId: string | null; title: string; type: ArtifactType; language: string; content: string };
 
 type ChatStreamPayload = {
   delta?: string;
@@ -249,7 +253,17 @@ export default function ChatPage({
   const [canvasOn, setCanvasOn] = useState(false);
   const [documentOn, setDocumentOn] = useState(false);
   const [canvasOpen, setCanvasOpen] = useState(false);
-  const [canvasDoc, setCanvasDoc] = useState<CanvasDoc | null>(null);
+  const [canvasFile, setCanvasFile] = useState<OpenFile | null>(null);
+  const [artifactId, setArtifactId] = useState<string | null>(null);
+  const [saveState, setSaveState] = useState<"saved" | "saving" | "unsaved" | "error">("saved");
+  const [artifactHistory, setArtifactHistory] = useState<ArtifactVersion[]>([]);
+  const artifactIdRef = useRef<string | null>(null);
+  const draftRef = useRef("");
+  const sentRef = useRef("");
+  const saveTimer = useRef<number | null>(null);
+  const savedArtifacts = useRef<Record<string, SavedArtifact>>({});
+  const preserveEdit = useRef(false);
+  const [savedTick, setSavedTick] = useState(0);
   const [canvasVersion, setCanvasVersion] = useState(0);
   const canvasDirty = useRef(false);
   const canvasFollow = useRef(true);
@@ -447,20 +461,59 @@ export default function ChatPage({
     canvasVersionRef.current = 0;
     setCanvasVersion(0);
     setCanvasOpen(false);
+    setCanvasFile(null);
+    setArtifactId(null);
+    artifactIdRef.current = null;
+    draftRef.current = "";
+    sentRef.current = "";
+    savedArtifacts.current = {};
+    setArtifactHistory([]);
   }, [conversationId]);
+
+  function adoptFile(file: OpenFile, messageId: string, savedId?: string | null) {
+    draftRef.current = file.content;
+    sentRef.current = file.content;
+    canvasMsgId.current = messageId;
+    if (savedId) {
+      artifactIdRef.current = savedId;
+      setArtifactId(savedId);
+    }
+    setCanvasFile(file);
+    setSaveState("saved");
+  }
+
+  function showArtifact(file: ArtifactFile, messageId: string, index = 0) {
+    const saved = savedArtifacts.current[messageId];
+    const list = listCanvasVersions(messages);
+    canvasFollow.current = index === list.length - 1;
+    canvasVersionRef.current = index;
+    setCanvasVersion(index);
+    canvasDirty.current = false;
+    canvasDismissed.current = "";
+    adoptFile(saved ? { title: saved.title, type: saved.type, language: saved.language, content: saved.content } : file, messageId, saved?.id || null);
+    if (!saved) {
+      artifactIdRef.current = null;
+      setArtifactId(null);
+    }
+    setCanvasOpen(true);
+  }
 
   function showCanvasVersion(index: number) {
     const list = listCanvasVersions(messages);
     const item = list[index];
     if (!item) return;
     const latest = index === list.length - 1;
+    const saved = savedArtifacts.current[item.messageId];
     canvasFollow.current = latest;
-    canvasDirty.current = !latest;
+    canvasDirty.current = false;
     canvasVersionRef.current = index;
-    canvasMsgId.current = item.messageId;
     canvasDismissed.current = "";
     setCanvasVersion(index);
-    setCanvasDoc(item.doc);
+    adoptFile(saved && latest ? { title: saved.title, type: saved.type, language: saved.language, content: saved.content } : item.file, item.messageId, saved?.id || null);
+    if (!saved) {
+      artifactIdRef.current = null;
+      setArtifactId(null);
+    }
     setCanvasOpen(true);
   }
 
@@ -469,25 +522,24 @@ export default function ChatPage({
     if (canvasHold.current) {
       if (!messages.length) return;
       canvasHold.current = false;
-      const last = list.at(-1);
-      canvasMsgId.current = last?.messageId || "";
+      canvasMsgId.current = list.at(-1)?.messageId || "";
       canvasVersionRef.current = Math.max(0, list.length - 1);
       setCanvasVersion(canvasVersionRef.current);
       return;
     }
+    if (preserveEdit.current || keepManualEdit(draftRef.current, sentRef.current)) return;
     if (!list.length) return;
     const index = canvasFollow.current ? list.length - 1 : Math.min(canvasVersionRef.current, list.length - 1);
     const item = list[index];
     if (!item) return;
-    if (canvasMsgId.current !== item.messageId) canvasDirty.current = false;
-    if (canvasDirty.current && canvasMsgId.current === item.messageId) return;
-    canvasMsgId.current = item.messageId;
+    const latest = index === list.length - 1;
+    const saved = latest ? savedArtifacts.current[item.messageId] : undefined;
     canvasVersionRef.current = index;
     setCanvasVersion(index);
-    setCanvasDoc(item.doc);
+    adoptFile(saved ? { title: saved.title, type: saved.type, language: saved.language, content: saved.content } : item.file, item.messageId, saved?.id);
     if (canvasDismissed.current === item.messageId) return;
     setCanvasOpen(true);
-  }, [messages]);
+  }, [messages, savedTick]);
 
   const refreshLoaded = useCallback(async () => {
     const data = await api.get("/api/models/loaded");
@@ -595,6 +647,15 @@ export default function ChatPage({
         .then((d) => {
           if (cancelled) return;
           setMessages((d.conversation.messages ?? []).map((message: UiMessage & { status?: string }) => mapLoadedMessage(message)));
+          void api.get(`/api/conversations/${conversationId}/artifacts`).then((rows) => {
+            if (cancelled) return;
+            const map: Record<string, SavedArtifact> = {};
+            for (const row of (rows.artifacts ?? []) as SavedArtifact[]) {
+              if (row.messageId) map[row.messageId] = row;
+            }
+            savedArtifacts.current = map;
+            setSavedTick((value) => value + 1);
+          }).catch(() => undefined);
           if (d.conversation.modelId) setModelId(d.conversation.modelId);
           setPendingFolderId(d.conversation.folderId ?? null);
           const isTemporary = Boolean(d.conversation.temporary);
@@ -693,6 +754,7 @@ export default function ChatPage({
       canvas?: boolean;
       document?: boolean;
       skillIds?: string[];
+      artifactAction?: ArtifactAction;
     },
   ) {
     const content = text.trim();
@@ -744,7 +806,8 @@ export default function ChatPage({
       setError("");
       return;
     }
-    const requestedCanvas = Boolean(options?.canvas ?? canvasOn);
+    const editingArtifact = Boolean(canvasOpen && canvasFile);
+    const requestedCanvas = Boolean(options?.canvas ?? canvasOn) || editingArtifact || Boolean(options?.artifactAction);
     const useCanvas = requestedCanvas && (isAdmin || features.toolCanvas);
     const useDocument = Boolean(options?.document ?? documentOn);
     const useSearch = Boolean(options?.search ?? webSearchOn) && webSearchAvailable;
@@ -800,6 +863,11 @@ export default function ChatPage({
       setAttachments([]);
     }
     setError("");
+    preserveEdit.current = options?.artifactAction === "explain";
+    if (useCanvas && canvasOpen && !preserveEdit.current) {
+      sentRef.current = draftRef.current;
+      canvasFollow.current = true;
+    }
     const sentAt = Date.now();
     const userMsg: UiMessage = {
       id: `u-${sentAt}`,
@@ -838,8 +906,13 @@ export default function ChatPage({
           editImage: useEdit,
           canvas: useCanvas,
           document: useDocument,
-          canvasTitle: useCanvas ? canvasDoc?.title : undefined,
-          canvasHtml: useCanvas && canvasOpen && canvasDoc ? canvasDoc.html : undefined,
+          canvasTitle: useCanvas && canvasOpen ? canvasFile?.title : undefined,
+          canvasHtml: useCanvas && canvasOpen && canvasFile?.type === "html" ? draftRef.current : undefined,
+          artifactId: useCanvas && canvasOpen ? artifactIdRef.current || undefined : undefined,
+          artifactType: useCanvas && canvasOpen ? canvasFile?.type : undefined,
+          artifactLanguage: useCanvas && canvasOpen ? canvasFile?.language : undefined,
+          artifactContent: useCanvas && canvasOpen ? draftRef.current : undefined,
+          artifactAction: options?.artifactAction,
           skillIds: options?.skillIds ?? selectedSkillIds,
           attachments: pendingAttachments.map((item) => ({
             name: item.name,
@@ -892,6 +965,7 @@ export default function ChatPage({
             saved?: string[];
             assistantId?: string;
             messageId?: string;
+            artifact?: SavedArtifact & { conversationId?: string; createdAt?: number; updatedAt?: number; version?: number };
           };
           const targetId = json.assistantId || json.messageId || asst.id;
           const touch = (prev: UiMessage[], patch: Partial<UiMessage>) =>
@@ -920,6 +994,31 @@ export default function ChatPage({
             );
           } else if (ev === "error") {
             setError(json.message || tr("generateError"));
+          } else if (ev === "artifact" && json.artifact) {
+            const row = json.artifact;
+            artifactIdRef.current = row.id;
+            setArtifactId(row.id);
+            if (row.messageId) savedArtifacts.current[row.messageId] = row;
+            if (keepManualEdit(draftRef.current, sentRef.current)) {
+              setSaveState("unsaved");
+              void api
+                .send(`/api/artifacts/${row.id}`, "PATCH", {
+                  title: canvasFile?.title,
+                  type: canvasFile?.type,
+                  language: canvasFile?.language,
+                  content: draftRef.current,
+                })
+                .then(() => setSaveState("saved"))
+                .catch(() => setSaveState("error"));
+            } else {
+              const next = { title: row.title, type: row.type, language: row.language, content: row.content };
+              draftRef.current = next.content;
+              sentRef.current = next.content;
+              setCanvasFile(next);
+              setSaveState("saved");
+              if (canvasDismissed.current !== row.messageId) setCanvasOpen(true);
+            }
+            void api.get(`/api/artifacts/${row.id}/versions`).then((data) => setArtifactHistory(data.versions ?? [])).catch(() => undefined);
           } else if (ev === "title") {
             await refreshChats();
           } else if (ev === "done") {
@@ -987,6 +1086,112 @@ export default function ChatPage({
       document: item.document,
       skillIds: item.skillIds,
     });
+  }
+
+  function scheduleSave(content: string) {
+    draftRef.current = content;
+    setCanvasFile((current) => (current ? { ...current, content } : current));
+    setSaveState("unsaved");
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => {
+      const id = artifactIdRef.current;
+      const current = canvasFile;
+      if (!id || !current) return;
+      setSaveState("saving");
+      void api
+        .send(`/api/artifacts/${id}`, "PATCH", { title: current.title, type: current.type, language: current.language, content: draftRef.current })
+        .then(async () => {
+          setSaveState("saved");
+          const data = await api.get(`/api/artifacts/${id}/versions`);
+          setArtifactHistory(data.versions ?? []);
+        })
+        .catch(() => setSaveState("error"));
+    }, 700);
+  }
+
+  async function renameOpenArtifact(title: string) {
+    setCanvasFile((current) => (current ? { ...current, title } : current));
+    const id = artifactIdRef.current;
+    if (!id) return;
+    await api.send(`/api/artifacts/${id}`, "PATCH", { title }).catch(() => setSaveState("error"));
+  }
+
+  async function restoreOpenArtifact(version: number) {
+    const id = artifactIdRef.current;
+    const local = artifactHistory.find((row) => row.version === version);
+    if (!id) {
+      if (!local) return;
+      draftRef.current = local.content;
+      sentRef.current = local.content;
+      setCanvasFile((current) => (current ? { ...current, content: local.content } : current));
+      return;
+    }
+    const data = await api.send(`/api/artifacts/${id}/restore`, "POST", { version });
+    const next = data.artifact as SavedArtifact;
+    draftRef.current = next.content;
+    sentRef.current = next.content;
+    setCanvasFile({ title: next.title, type: next.type, language: next.language, content: next.content });
+    const versions = await api.get(`/api/artifacts/${id}/versions`);
+    setArtifactHistory(versions.versions ?? []);
+    setSaveState("saved");
+  }
+
+  async function deleteOpenArtifact() {
+    const id = artifactIdRef.current;
+    if (id) await api.send(`/api/artifacts/${id}`, "DELETE").catch(() => undefined);
+    artifactIdRef.current = null;
+    setArtifactId(null);
+    setCanvasFile(null);
+    setCanvasOpen(false);
+    setArtifactHistory([]);
+  }
+
+  function askArtifact(action: ArtifactAction) {
+    const text: Record<ArtifactAction, string> = {
+      fix: "Fix this artifact.",
+      improve: "Improve this artifact.",
+      refactor: "Refactor this artifact.",
+      explain: "Explain this artifact.",
+      responsive: "Make this responsive.",
+      feature: "Add a feature to this artifact.",
+      convert: "Convert this artifact.",
+      optimize: "Optimize this artifact.",
+      regenerate: "Regenerate this artifact.",
+    };
+    void send(text[action], { canvas: true, artifactAction: action });
+  }
+
+  async function createBlankArtifact() {
+    if (!(isAdmin || features.toolCanvas)) return;
+    if (!model) {
+      setError(tr("noModelsEnabled"));
+      return;
+    }
+    let id = conversationIdRef.current;
+    if (!id) {
+      const created = await api.send("/api/conversations", "POST", { modelId: model.id, temporary: temporaryRef.current });
+      id = created.conversation.id as string;
+      conversationIdRef.current = id;
+      createdIdRef.current = id;
+      skipLoadRef.current = true;
+      navigate(`/chat/${id}`, { replace: true });
+    }
+    const data = await api.send("/api/artifacts", "POST", {
+      conversationId: id,
+      title: "Untitled",
+      type: "text",
+      language: "txt",
+      content: "",
+    });
+    const next = data.artifact as SavedArtifact;
+    artifactIdRef.current = next.id;
+    setArtifactId(next.id);
+    draftRef.current = next.content;
+    sentRef.current = next.content;
+    setCanvasFile({ title: next.title, type: next.type, language: next.language, content: next.content });
+    setCanvasOpen(true);
+    setCanvasOn(true);
+    setSaveState("saved");
   }
 
   async function stop() {
@@ -1245,7 +1450,7 @@ export default function ChatPage({
           />
         ) : (
         <div className="flex min-h-0 min-w-0 flex-1">
-        <div className={`flex min-h-0 min-w-0 flex-1 flex-col ${canvasOpen ? "max-md:hidden" : ""}`}>
+        <div className={`flex min-h-0 min-w-0 flex-1 flex-col ${canvasOpen ? artifactChatClass : ""}`}>
         {empty ? (
           phoneLayout ? (
             <>
@@ -1302,6 +1507,7 @@ export default function ChatPage({
                 if (last) void send(last.content);
               }}
               onOpenCanvas={(_doc, index) => showCanvasVersion(index)}
+              onOpenArtifact={(file, messageId, index) => showArtifact(file, messageId, index)}
               onRate={(id, rating) => {
                 const previous = messages.find((message) => message.id === id)?.rating || 0;
                 setMessages((prev) => prev.map((message) => (message.id === id ? { ...message, rating } : message)));
@@ -1316,18 +1522,29 @@ export default function ChatPage({
           </>
         )}
         </div>
-        {canvasOpen && canvasDoc ? (
+        {canvasOpen && canvasFile ? (
           <CanvasPanel
-            doc={canvasDoc}
+            title={canvasFile.title}
+            content={canvasFile.content}
+            type={canvasFile.type}
+            language={canvasFile.language}
+            saveState={saveState}
             shareBase={features.webUiUrl}
             canShare={features.sharingEnabled}
             versionIndex={canvasVersion}
             versionCount={listCanvasVersions(messages).length}
+            history={artifactHistory}
             onVersion={showCanvasVersion}
-            onChange={(html) => {
-              canvasDirty.current = true;
-              setCanvasDoc((current) => (current ? { ...current, html } : current));
+            onChange={scheduleSave}
+            onRename={(title) => void renameOpenArtifact(title)}
+            onRestore={(version) => void restoreOpenArtifact(version)}
+            onDelete={() => void deleteOpenArtifact()}
+            onAsk={askArtifact}
+            onRegenerate={() => {
+              const last = [...messages].reverse().find((item) => item.role === "user");
+              if (last) void send(last.content, { canvas: true, artifactAction: "regenerate" });
             }}
+            onNew={() => void createBlankArtifact()}
             onClose={() => {
               canvasDismissed.current = canvasMsgId.current;
               setCanvasOpen(false);

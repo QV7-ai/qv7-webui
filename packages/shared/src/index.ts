@@ -881,6 +881,225 @@ export const CANVAS_PROMPT = `When the user wants a document, article, letter, w
 
 Style the page with Tailwind classes on the elements, the way a Gemini canvas does. Do not write a \`\`\`css fence. Do not put the design in a separate style block. Do not use a <canvas> tag. Do not use LaTeX or dollar-sign math.`;
 
+export const ARTIFACT_TYPES = ["code", "html", "css", "javascript", "typescript", "react", "markdown", "json", "sql", "svg", "text", "config"] as const;
+export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
+export type ArtifactSource = "user" | "ai";
+export const ARTIFACT_ACTIONS = ["explain", "fix", "improve", "refactor", "responsive", "feature", "convert", "optimize", "regenerate"] as const;
+export type ArtifactAction = (typeof ARTIFACT_ACTIONS)[number];
+
+export type ArtifactFile = {
+  title: string;
+  type: ArtifactType;
+  language: string;
+  content: string;
+};
+
+const ARTIFACT_LANG: Record<string, { type: ArtifactType; language: string }> = {
+  html: { type: "html", language: "html" },
+  htm: { type: "html", language: "html" },
+  css: { type: "css", language: "css" },
+  scss: { type: "css", language: "scss" },
+  js: { type: "javascript", language: "js" },
+  javascript: { type: "javascript", language: "js" },
+  jsx: { type: "react", language: "jsx" },
+  ts: { type: "typescript", language: "ts" },
+  typescript: { type: "typescript", language: "ts" },
+  tsx: { type: "react", language: "tsx" },
+  react: { type: "react", language: "tsx" },
+  md: { type: "markdown", language: "md" },
+  markdown: { type: "markdown", language: "md" },
+  json: { type: "json", language: "json" },
+  sql: { type: "sql", language: "sql" },
+  svg: { type: "svg", language: "svg" },
+  txt: { type: "text", language: "txt" },
+  text: { type: "text", language: "txt" },
+  xml: { type: "config", language: "xml" },
+  yaml: { type: "config", language: "yaml" },
+  yml: { type: "config", language: "yml" },
+  toml: { type: "config", language: "toml" },
+  ini: { type: "config", language: "ini" },
+  env: { type: "config", language: "env" },
+  py: { type: "code", language: "py" },
+  python: { type: "code", language: "py" },
+  sh: { type: "code", language: "sh" },
+  bash: { type: "code", language: "sh" },
+  go: { type: "code", language: "go" },
+  rs: { type: "code", language: "rs" },
+  rust: { type: "code", language: "rs" },
+};
+
+const ARTIFACT_EXT: Record<string, string> = {
+  javascript: "js",
+  typescript: "ts",
+  markdown: "md",
+  react: "tsx",
+  python: "py",
+  bash: "sh",
+  rust: "rs",
+};
+
+function artifactTypeOf(value: string | undefined): ArtifactType | null {
+  const name = (value || "").trim().toLowerCase();
+  return (ARTIFACT_TYPES as readonly string[]).includes(name) ? (name as ArtifactType) : null;
+}
+
+function languageInfo(value: string | undefined) {
+  const name = (value || "").trim().toLowerCase().replace(/^\./, "");
+  return ARTIFACT_LANG[name] || null;
+}
+
+export function normalizeArtifact(input: { title?: string; type?: string; language?: string; content: string }): ArtifactFile {
+  const fromLang = languageInfo(input.language) || languageInfo(input.type);
+  const type = artifactTypeOf(input.type) || fromLang?.type || detectArtifactType(input.content);
+  const language = (input.language || fromLang?.language || defaultLanguage(type)).trim().toLowerCase().replace(/^\./, "") || defaultLanguage(type);
+  const title = (input.title || "").trim().slice(0, 80) || defaultArtifactTitle(type);
+  return { title, type, language, content: input.content.replace(/\s+$/, "") };
+}
+
+function defaultLanguage(type: ArtifactType) {
+  if (type === "javascript") return "js";
+  if (type === "typescript") return "ts";
+  if (type === "react") return "tsx";
+  if (type === "markdown") return "md";
+  if (type === "text") return "txt";
+  if (type === "config") return "json";
+  if (type === "code") return "txt";
+  return type;
+}
+
+function defaultArtifactTitle(type: ArtifactType) {
+  if (type === "html") return "Page";
+  if (type === "markdown") return "Note";
+  if (type === "svg") return "Drawing";
+  return "Untitled";
+}
+
+export function detectArtifactType(content: string): ArtifactType {
+  const body = content.trim();
+  if (/^<svg\b/i.test(body)) return "svg";
+  if (/^<!doctype html/i.test(body) || /^<html[\s>]/i.test(body)) return "html";
+  if (/^<(?:style|link|script)\b/i.test(body) && /<\/style>|<\/script>/i.test(body) && !/<html[\s>]/i.test(body)) return "html";
+  if (/^[.#a-z*][^{]{0,80}\{[\s\S]*\}/i.test(body) && !/<\/?[a-z][^>]*>/i.test(body)) return "css";
+  if (/^(?:select|with|insert|update|delete|create|alter|drop)\b/i.test(body)) return "sql";
+  if (body.startsWith("{") || body.startsWith("[")) {
+    try {
+      JSON.parse(body);
+      return "json";
+    } catch {
+      /* keep looking */
+    }
+  }
+  if (/^(?:import |export |function |const |let |class )/m.test(body) && /jsx|tsx|<\/[A-Z]/.test(body)) return "react";
+  if (/^#{1,6}\s+\S/m.test(body)) return "markdown";
+  return "text";
+}
+
+export function artifactExtension(type: ArtifactType, language: string) {
+  const lang = language.trim().toLowerCase().replace(/^\./, "");
+  if (lang && lang !== type) return ARTIFACT_EXT[lang] || lang;
+  return defaultLanguage(type) === "txt" && type === "code" ? "txt" : defaultLanguage(type);
+}
+
+export function artifactFilename(title: string, type: ArtifactType, language: string) {
+  const base = title.replace(/[\\/:*?"<>|]+/g, "-").trim().slice(0, 60) || "artifact";
+  const ext = artifactExtension(type, language);
+  return base.toLowerCase().endsWith(`.${ext}`) ? base : `${base}.${ext}`;
+}
+
+export function previewSandbox(type: ArtifactType) {
+  if (type === "html") return "allow-scripts";
+  if (type === "svg") return "";
+  return null;
+}
+
+export function keepManualEdit(draft: string, sent: string) {
+  return draft !== sent;
+}
+
+export function artifactActionLine(action: ArtifactAction | undefined) {
+  if (action === "explain") return "Explain the open file in the chat. Do not output an artifact fence or a replacement file.";
+  if (action === "fix") return "Fix problems in the open file. Output one complete file and keep edits the user did not ask to change.";
+  if (action === "improve") return "Improve the open file. Output one complete file and keep edits the user did not ask to change.";
+  if (action === "refactor") return "Refactor the open file without changing what it does. Output one complete file.";
+  if (action === "responsive") return "Make the open file responsive. Output one complete file and keep the rest of the user's edits.";
+  if (action === "feature") return "Add one fitting feature to the open file. Output one complete file and keep the user's other edits.";
+  if (action === "convert") return "Convert the open file into the format the user asked for. If they did not name one, keep the same kind of file and make the structure clearer. Output one complete file.";
+  if (action === "optimize") return "Optimize the open file. Output one complete file and keep behavior the user did not ask to change.";
+  if (action === "regenerate") return "Regenerate the open file from the user's request. Output one complete file.";
+  return "";
+}
+
+export const ARTIFACT_PROMPT = `For a webpage, follow the HTML canvas instructions and use one html fence. For code, CSS, JavaScript, TypeScript, React, Markdown, JSON, SQL, SVG, plain text, or a config file, reply with one short sentence and one artifact fence. Do not paste that file in the chat.
+
+The fence starts with \`\`\`artifact and these header lines, then a blank line, then the complete file:
+title: Short name
+type: react
+language: tsx
+
+type is one of: code, html, css, javascript, typescript, react, markdown, json, sql, svg, text, config.
+On a revision, output the whole file. Keep every part the user did not ask to change, including edits they typed.
+If they ask you to explain, answer in the chat and do not output a new file.`;
+
+function artifactPieces(text: string) {
+  const pieces: { full: string; info: string; body: string }[] = [];
+  const closed = /```artifact(?:[ \t]+([^\n`]*))?\n([\s\S]*?)```/gi;
+  let match: RegExpExecArray | null;
+  let lastEnd = 0;
+  while ((match = closed.exec(text))) {
+    pieces.push({ full: match[0], info: (match[1] || "").trim(), body: match[2] });
+    lastEnd = match.index + match[0].length;
+  }
+  const open = text.slice(lastEnd).match(/```artifact(?:[ \t]+([^\n`]*))?\n([\s\S]*)$/);
+  if (open) pieces.push({ full: open[0], info: (open[1] || "").trim(), body: open[2] });
+  return pieces;
+}
+
+function artifactFromBody(info: string, body: string): ArtifactFile | null {
+  const lines = body.split(/\r?\n/);
+  const meta: Record<string, string> = {};
+  let index = 0;
+  while (index < lines.length && index < 8) {
+    const row = lines[index].match(/^(title|type|language):\s*(.*)$/i);
+    if (!row) break;
+    meta[row[1].toLowerCase()] = row[2].trim();
+    index += 1;
+  }
+  if (index && lines[index] === "") index += 1;
+  const content = lines.slice(index).join("\n");
+  if (!content.trim() && !meta.title && !meta.type && !info) return null;
+  const infoType = artifactTypeOf(info) || languageInfo(info);
+  return normalizeArtifact({
+    title: meta.title,
+    type: meta.type || (typeof infoType === "string" ? infoType : infoType?.type) || info,
+    language: meta.language || (typeof infoType === "object" && infoType ? infoType.language : info),
+    content,
+  });
+}
+
+export function parseArtifactFences(text: string): ArtifactFile[] {
+  return artifactPieces(text)
+    .map((piece) => artifactFromBody(piece.info, piece.body))
+    .filter((file): file is ArtifactFile => Boolean(file && (file.content.trim() || file.title)));
+}
+
+export function stripArtifactFences(text: string) {
+  const pieces = artifactPieces(text);
+  if (!pieces.length) return text.trim();
+  let out = text;
+  for (const piece of pieces) out = out.split(piece.full).join("");
+  return out.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+export function takeReplyArtifact(text: string): ArtifactFile | null {
+  const fenced = parseArtifactFences(text);
+  const file = fenced[fenced.length - 1];
+  if (file) return file;
+  const docs = parseCanvases(text);
+  const doc = docs[docs.length - 1];
+  if (!doc) return null;
+  return { title: doc.title, type: "html", language: "html", content: doc.html };
+}
+
 export const CANVAS_DESIGN = `Build one finished HTML document. The head must include exactly these two lines, then the page:
 
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">

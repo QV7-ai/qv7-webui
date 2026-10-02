@@ -8,7 +8,8 @@ import { chatBodySchema } from "./env.ts";
 import { thinkParam } from "./services/ollama/index.ts";
 import { parseShowCapabilities } from "./services/ollama/capabilities.ts";
 import { publicErrorMessage, OllamaError } from "./services/ollama/errors.ts";
-import { usageFromOllama, type UsageStats, type WebSearchSource, type ChatActivity, parseUsedMemories, DEFAULT_SYSTEM_PROMPT, toolsPromptFor, stripToolMarkup, stripLeakedAssistant, parseGenerationSettings, parseInstructionTone, instructionToneLine, workRoleLabel, CANVAS_PROMPT, CANVAS_DESIGN, TASK_MODEL_CURRENT, type ConnectionsConfig, type ProviderConnection } from "@wlfv/shared";
+import { usageFromOllama, type UsageStats, type WebSearchSource, type ChatActivity, parseUsedMemories, DEFAULT_SYSTEM_PROMPT, toolsPromptFor, stripToolMarkup, stripLeakedAssistant, parseGenerationSettings, parseInstructionTone, instructionToneLine, workRoleLabel, CANVAS_PROMPT, CANVAS_DESIGN, ARTIFACT_PROMPT, artifactActionLine, TASK_MODEL_CURRENT, type ConnectionsConfig, type ProviderConnection } from "@wlfv/shared";
+import { recordReplyArtifact } from "./artifacts.ts";
 import { listLoadedModels, resolveModelConnection, resolveOllamaModel } from "./models.ts";
 import { loadWebSearch, runWebSearch } from "./web-search/index.ts";
 import { handleImageTurn, imagesEnabledFor } from "./images/turn.ts";
@@ -577,8 +578,28 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
     if (!quota.ok) return reply.code(429).send({ error: quota.message, code: quota.code });
     const parsed = chatBodySchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "The request was invalid." });
-    const { conversationId, message, modelId, thinking, webSearch, codeInterpreter, attachments, createImage, editImage, skillIds, canvas, canvasTitle, canvasHtml, document: documentMode } =
-      parsed.data;
+    const {
+      conversationId,
+      message,
+      modelId,
+      thinking,
+      webSearch,
+      codeInterpreter,
+      attachments,
+      createImage,
+      editImage,
+      skillIds,
+      canvas,
+      canvasTitle,
+      canvasHtml,
+      artifactId,
+      artifactType,
+      artifactLanguage,
+      artifactContent,
+      artifactAction,
+      document: documentMode,
+    } = parsed.data;
+    const openArtifact = (artifactContent || canvasHtml || "").trim();
     const imageMode = editImage ? "edit" : createImage ? "create" : null;
     if (imageMode && !imagesEnabledFor(db, imageMode)) {
       return reply.code(400).send({ error: imageMode === "edit" ? "Image editing is disabled." : "Image generation is disabled." });
@@ -622,7 +643,7 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
     if (user.role !== "admin") {
       if (webSearch && !toolAccess.toolWebSearch) return reply.code(403).send({ error: "Web search is disabled." });
       if (codeInterpreter && !toolAccess.toolCode) return reply.code(403).send({ error: "Code interpreter is disabled." });
-      if ((canvas || canvasHtml) && !toolAccess.toolCanvas) return reply.code(403).send({ error: "Canvas is disabled." });
+      if ((canvas || openArtifact) && !toolAccess.toolCanvas) return reply.code(403).send({ error: "Canvas is disabled." });
     }
     if (imageMode === "create" && !message.trim()) {
       return reply.code(400).send({ error: "Enter a prompt to create an image." });
@@ -917,18 +938,20 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
         toolPrompt,
         folderPrompt,
         skillPrompt,
-        canvas
+        canvas || openArtifact
           ? [
-              CANVAS_PROMPT,
-              CANVAS_DESIGN,
-              "Canvas is on for this message. Reply with one short sentence and one ```html file styled with Tailwind classes. Include the Tailwind and Font Awesome lines in the head. Do not output a ```css block. Never output a <canvas> tag.",
-              canvasHtml?.trim()
-                ? `The user is editing this HTML file${canvasTitle ? ` titled "${canvasTitle.slice(0, 80)}"` : ""}. When they ask for a change, output one new \`\`\`html fence with the complete redesigned file. Keep the same design quality. Do not use a <canvas> tag.\n${canvasHtml.slice(0, 80000)}`
+              !artifactType || artifactType === "html" ? CANVAS_PROMPT : "",
+              !artifactType || artifactType === "html" ? CANVAS_DESIGN : "",
+              ARTIFACT_PROMPT,
+              artifactActionLine(artifactAction),
+              "Canvas is on for this message. Reply with one short sentence and the file. For a webpage, use one ```html fence styled with Tailwind classes. Include the Tailwind and Font Awesome lines in the head. Do not output a ```css block. Never output a <canvas> tag. For any other file, use one ```artifact fence.",
+              openArtifact
+                ? `The user is editing this ${artifactType || "html"} file${canvasTitle ? ` titled "${canvasTitle.slice(0, 80)}"` : ""}${artifactLanguage ? ` (${artifactLanguage})` : ""}. The text below is the current file, including edits they typed. Change only what they asked for. Do not drop their other edits. Output one complete file.\n${openArtifact.slice(0, 200000)}`
                 : "",
             ]
               .filter(Boolean)
               .join("\n\n")
-          : "Canvas is off. Do not output a complete HTML document, a ```html page, or a canvas file. If a skill asks for an HTML report or a canvas, answer in normal chat markdown instead.",
+          : "Canvas is off. Do not output a complete HTML document, a ```html page, a ```artifact fence, or a canvas file. If a skill asks for an HTML report or a canvas, answer in normal chat markdown instead.",
         documentMode
           ? `Document is on. After one short sentence, output exactly one fenced file:\n\n\`\`\`document\nfilename: Title.${preferredDocumentExt(message)}\n\nThe full document.\n\`\`\`\n\nWrite the whole document inside the fence. Use Markdown headings and paragraphs. The file is saved as that filename. Do not say you cannot create files.`
           : "",
@@ -1520,6 +1543,16 @@ export function registerChat(app: FastifyInstance, db: DB, env: Env, uploadsDir:
         db.update(conversations).set({ modelId: model.id, updatedAt: Date.now() }).where(eq(conversations.id, conversationId)).run();
       }
       const doneMemory = memoryUsedPayload(memoryMeta);
+      if (status === "complete" && artifactAction !== "explain") {
+        const savedArtifact = recordReplyArtifact(db, {
+          userId: user.id,
+          conversationId,
+          messageId: assistantId,
+          content,
+          artifactId,
+        });
+        if (savedArtifact) emit("artifact", { artifact: savedArtifact });
+      }
       emit("done", {
         messageId: assistantId,
         usage,

@@ -8,7 +8,7 @@
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test src/components/chat/memory-used.test.tsx"
+    "test": "tsx --test src/components/chat/memory-used.test.tsx src/components/chat/artifact.test.tsx src/components/chat/web-preview.test.ts"
   },
   "dependencies": {
     "@wlfv/shared": "*",
@@ -21,6 +21,7 @@
     "react-router-dom": "^7.9.1",
     "react-syntax-highlighter": "^16.1.1",
     "remark-gfm": "^4.0.1",
+    "sucrase": "^3.35.1",
     "tailwind-merge": "^3.3.1"
   },
   "devDependencies": {

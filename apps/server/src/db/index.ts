@@ -323,6 +323,28 @@ export function openDb(env: Env) {
     sqlite.exec("ALTER TABLE users ADD COLUMN usage_reset_at INTEGER NOT NULL DEFAULT 0");
   }
   sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS artifacts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      message_id TEXT,
+      title TEXT NOT NULL,
+      type TEXT NOT NULL,
+      language TEXT NOT NULL DEFAULT '',
+      content TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS artifacts_conversation ON artifacts(conversation_id, updated_at);
+    CREATE TABLE IF NOT EXISTS artifact_versions (
+      id TEXT PRIMARY KEY,
+      artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+      version INTEGER NOT NULL,
+      content TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      source TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS artifact_versions_artifact ON artifact_versions(artifact_id, version);
     CREATE TABLE IF NOT EXISTS canvas_shares (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

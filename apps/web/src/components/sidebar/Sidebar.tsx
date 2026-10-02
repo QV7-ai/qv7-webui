@@ -110,7 +110,6 @@ export function Sidebar({
   const tr = useT();
   const [editing, setEditing] = useState<ChatFolder | null>(null);
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
-  const [dropId, setDropId] = useState<string | null>(null);
   const [instructionsOpen, setInstructionsOpen] = useState(false);
   const isDraft = Boolean(editing && !editing.id);
 
@@ -206,21 +205,7 @@ export function Sidebar({
             const items = visible.filter((chat) => chat.folderId === folder.id);
             const expanded = isOpen(folder.id);
             return (
-              <div
-                key={folder.id}
-                className={cn("mb-1 rounded-lg", dropId === folder.id && "bg-[var(--hover)]")}
-                onDragOver={(event) => {
-                  event.preventDefault();
-                  setDropId(folder.id);
-                }}
-                onDragLeave={() => setDropId((current) => (current === folder.id ? null : current))}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  setDropId(null);
-                  const chatId = event.dataTransfer.getData("text/chat-id");
-                  if (chatId) onMoveChat(chatId, folder.id);
-                }}
-              >
+              <div key={folder.id} className="mb-1 rounded-lg">
                 <div className="flex items-center">
                   <button
                     type="button"
@@ -276,20 +261,7 @@ export function Sidebar({
             );
           })
           : null}
-          <div
-            className={cn("mt-2 rounded-lg", dropId === "" && "bg-[var(--hover)]")}
-            onDragOver={(event) => {
-              event.preventDefault();
-              setDropId("");
-            }}
-            onDragLeave={() => setDropId((current) => (current === "" ? null : current))}
-            onDrop={(event) => {
-              event.preventDefault();
-              setDropId(null);
-              const chatId = event.dataTransfer.getData("text/chat-id");
-              if (chatId) onMoveChat(chatId, null);
-            }}
-          >
+          <div className="mt-2 rounded-lg">
             {[...groups.entries()].map(([label, items]) => (
               <div key={label} className="mb-3">
                 <p className="px-2.5 pb-1 text-[11px] text-[var(--muted)]">{label}</p>
@@ -425,14 +397,7 @@ function ChatRow({
   }
 
   return (
-    <div
-      className={cn("group relative", nested && "pl-4")}
-      draggable={!renaming}
-      onDragStart={(event) => {
-        event.dataTransfer.setData("text/chat-id", chat.id);
-        event.dataTransfer.effectAllowed = "move";
-      }}
-    >
+    <div className={cn("group relative", nested && "pl-4")}>
       {renaming ? (
         <input
           autoFocus

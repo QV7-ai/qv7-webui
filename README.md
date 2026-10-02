@@ -26,7 +26,7 @@ The interface is mobile friendly. On a phone the composer stays above the keyboa
 - File, image, and webpage attachments
 - Skills, folder instructions, and personal tone
 - Memory the model can save and search
-- Canvas pages beside the chat
+- Canvas pages and artifacts beside the chat
 - Accounts, roles, and optional public sign-up
 - Branding, dark and light themes, and English or Dutch
 - Mobile friendly layout, and installable in the browser on a phone

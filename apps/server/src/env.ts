@@ -1,3 +1,4 @@
+import { ARTIFACT_ACTIONS, ARTIFACT_TYPES } from "@wlfv/shared";
 import { z } from "zod";
 
 function readEnv(name: string, fallback = "") {
@@ -48,7 +49,12 @@ export const chatBodySchema = z
     canvas: z.boolean().optional(),
     document: z.boolean().optional(),
     canvasTitle: z.string().max(80).optional(),
-    canvasHtml: z.string().max(80000).optional(),
+    canvasHtml: z.string().max(200000).optional(),
+    artifactId: z.string().max(80).optional(),
+    artifactType: z.enum(ARTIFACT_TYPES).optional(),
+    artifactLanguage: z.string().max(32).optional(),
+    artifactContent: z.string().max(200000).optional(),
+    artifactAction: z.enum(ARTIFACT_ACTIONS).optional(),
     attachments: z
       .array(
         z.object({

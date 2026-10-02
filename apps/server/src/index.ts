@@ -31,6 +31,7 @@ import { registerUploads, resolveUploadsDir } from "./uploads.ts";
 import { registerAttachments } from "./attachments.ts";
 import { registerImages } from "./images/index.ts";
 import { registerCanvases } from "./canvases.ts";
+import { registerArtifacts } from "./artifacts.ts";
 
 async function main() {
   const env = loadEnv();
@@ -89,6 +90,7 @@ async function main() {
   registerAdminDatabase(app, db, env);
   registerConnections(app, db, env);
   registerCanvases(app, db);
+  registerArtifacts(app, db);
 
   const here = path.dirname(fileURLToPath(import.meta.url));
   const webDist = [path.resolve(here, "../../web/dist"), path.resolve(process.cwd(), "../web/dist"), path.resolve(process.cwd(), "apps/web/dist")].find(

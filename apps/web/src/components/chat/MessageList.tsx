@@ -1,6 +1,6 @@
 import { Copy, FileText, PanelsTopLeft, Pencil, RefreshCw, ThumbsDown, ThumbsUp } from "lucide-react";
 import type { ChatActivity, UsageStats, UsedMemory, WebSearchSource } from "@wlfv/shared";
-import { parseCanvases, stripCanvas, stripToolMarkup, type CanvasDoc } from "@wlfv/shared";
+import { parseArtifactFences, parseCanvases, stripArtifactFences, stripCanvas, stripToolMarkup, type ArtifactFile, type CanvasDoc } from "@wlfv/shared";
 import { Markdown } from "./Markdown";
 import { ActivityTrace } from "./ActivityTrace";
 import { UsageLine } from "./UsageLine";
@@ -71,13 +71,33 @@ export function splitUserContent(content: string) {
   return { text, images };
 }
 
+export type CanvasVersion = {
+  messageId: string;
+  source: "canvas" | "artifact";
+  file: { title: string; type: ArtifactFile["type"]; language: string; content: string };
+};
+
 export function listCanvasVersions(messages: UiMessage[]) {
-  const versions: { messageId: string; doc: CanvasDoc }[] = [];
+  const versions: CanvasVersion[] = [];
   for (const message of messages) {
     if (message.role !== "assistant" || message.canvas === false) continue;
-    for (const doc of parseCanvases(message.content)) versions.push({ messageId: message.id, doc });
+    for (const doc of parseCanvases(message.content)) {
+      versions.push({ messageId: message.id, source: "canvas", file: { title: doc.title, type: "html", language: "html", content: doc.html } });
+    }
+    for (const file of parseArtifactFences(message.content)) versions.push({ messageId: message.id, source: "artifact", file });
   }
   return versions;
+}
+
+function canvasVersionIndex(versions: CanvasVersion[], messageId: string, source: CanvasVersion["source"], ordinal: number) {
+  let seen = 0;
+  for (let index = 0; index < versions.length; index++) {
+    const item = versions[index];
+    if (item.messageId !== messageId || item.source !== source) continue;
+    if (seen === ordinal) return index;
+    seen += 1;
+  }
+  return -1;
 }
 
 export function MessageList({
@@ -88,6 +108,7 @@ export function MessageList({
   onCopy,
   onRegenerate,
   onOpenCanvas,
+  onOpenArtifact,
   onRate,
 }: {
   messages: UiMessage[];
@@ -97,6 +118,7 @@ export function MessageList({
   onCopy: (text: string) => void;
   onRegenerate: () => void;
   onOpenCanvas?: (doc: CanvasDoc, index: number) => void;
+  onOpenArtifact?: (file: ArtifactFile, messageId: string, index: number) => void;
   onRate?: (id: string, rating: number) => void;
 }) {
   const tr = useT();
@@ -141,7 +163,8 @@ export function MessageList({
               {(() => {
                 const showCanvas = m.canvas !== false;
                 const canvases = showCanvas ? parseCanvases(m.content) : [];
-                const visibleSource = stripToolMarkup(showCanvas ? stripCanvas(m.content) : m.content);
+                const artifacts = parseArtifactFences(m.content);
+                const visibleSource = stripToolMarkup(stripArtifactFences(showCanvas ? stripCanvas(m.content) : m.content));
                 const files = splitDocuments(visibleSource);
                 const visible = files.text;
                 const traced = Boolean(m.thinking || m.activities?.length || m.sources?.length);
@@ -150,8 +173,7 @@ export function MessageList({
                   <>
                     {waiting ? <ModelWait stage={m.wait || "loading"} /> : null}
                     {canvases.map((doc, docIndex) => {
-                      const start = versions.findIndex((item) => item.messageId === m.id);
-                      const versionIndex = start + docIndex;
+                      const versionIndex = canvasVersionIndex(versions, m.id, "canvas", docIndex);
                       return (
                         <button
                           key={`${m.id}-${docIndex}`}
@@ -167,6 +189,22 @@ export function MessageList({
                         </button>
                       );
                     })}
+                    {artifacts.map((file, fileIndex) => (
+                      <button
+                        key={`${m.id}-artifact-${fileIndex}`}
+                        type="button"
+                        className="mb-3 flex w-full max-w-md items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-3 py-3 text-left hover:bg-[var(--hover)]"
+                        onClick={() => {
+                          onOpenArtifact?.(file, m.id, canvasVersionIndex(versions, m.id, "artifact", fileIndex));
+                        }}
+                      >
+                        <PanelsTopLeft size={18} className="shrink-0 text-[var(--accent)]" />
+                        <span className="min-w-0">
+                          <span className="block text-[12px] text-[var(--muted)]">{tr("canvas")}</span>
+                          <span className="block truncate text-[14px] font-medium">{file.title}</span>
+                        </span>
+                      </button>
+                    ))}
                     {files.docs.map((doc) => (
                       <a
                         key={doc.url}
